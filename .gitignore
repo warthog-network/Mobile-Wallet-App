@@ -46,3 +46,8 @@ yarn-error.*
 
 # development documentation (agent/local use only)
 ADDRESSBOOK_*.md
+
+# local release artifacts
+defi-mobile.apk
+android/
+local.properties
