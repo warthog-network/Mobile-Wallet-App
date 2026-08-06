@@ -539,12 +539,25 @@ const Wallet: React.FC = () => {
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    if (wallet?.address) {
-      await fetchBalanceAndNonce(wallet.address);
-      if (isDefi) await defi.refreshDefiData();
+    try {
+      if (wallet?.address) {
+        await fetchBalanceAndNonce(wallet.address);
+        if (isDefi) await defi.refreshDefiData();
+      }
+    } catch (e) {
+      // Balance/defi helpers already surface errors; never leave the spinner stuck.
+      console.error('Refresh failed:', e);
+    } finally {
+      setRefreshing(false);
     }
-    setRefreshing(false);
   }, [wallet, isDefi, fetchBalanceAndNonce, defi.refreshDefiData]);
+
+  // Re-fetch WART balance whenever the selected node changes (mainnet ↔ testnet).
+  // Node-switch UI only updates selectedNode; defi data is handled inside useDefiWallet.
+  useEffect(() => {
+    if (!wallet?.address) return;
+    fetchBalanceAndNonce(wallet.address);
+  }, [selectedNode, wallet?.address, fetchBalanceAndNonce]);
 
   /** After a spend/lock tx: bump nonce and re-fetch free/locked for WART + assets. */
   const afterSpendSuccess = useCallback(async (newNonce: number) => {
@@ -1365,13 +1378,7 @@ const Wallet: React.FC = () => {
                     <TouchableOpacity
                       key={n}
                       style={[styles.nodeButton, selectedNode === n && styles.activeButton]}
-                      onPress={() => {
-                        setSelectedNode(n);
-                        if (wallet?.address) {
-                          fetchBalanceAndNonce(wallet.address);
-                          if (isDefiNode(n)) defi.refreshDefiData();
-                        }
-                      }}
+                      onPress={() => setSelectedNode(n)}
                     >
                       <Text
                         style={[

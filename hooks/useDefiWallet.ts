@@ -140,6 +140,9 @@ export function useDefiWallet(
       const orders = await fetchOpenOrders(selectedNode, wallet.address);
       setOpenOrders(orders);
       return orders;
+    } catch (e) {
+      console.error('Failed to refresh open orders:', e);
+      return null;
     } finally {
       setLoadingOrders(false);
     }
@@ -155,6 +158,8 @@ export function useDefiWallet(
       ];
       const positions = await fetchLiquidityPositions(selectedNode, wallet.address, hashes, assetBalances);
       setLiquidityPositions(positions);
+    } catch (e) {
+      console.error('Failed to refresh liquidity positions:', e);
     } finally {
       setLoadingLiquidity(false);
     }
@@ -162,7 +167,8 @@ export function useDefiWallet(
 
   const refreshDefiData = useCallback(async () => {
     if (!isDefi) return;
-    await Promise.all([refreshAllAssets(), refreshOpenOrders(), refreshLiquidity()]);
+    // Settle all branches even if one rejects so callers (e.g. hero refresh spinner) can finish.
+    await Promise.allSettled([refreshAllAssets(), refreshOpenOrders(), refreshLiquidity()]);
   }, [isDefi, refreshAllAssets, refreshOpenOrders, refreshLiquidity]);
 
   const bumpNonceAfterTx = useCallback(async (usedNonce: number) => {

@@ -55,8 +55,11 @@ export const useBalance = (walletAddress?: string) => {
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await fetchBalanceAndNonce();
-    setRefreshing(false);
+    try {
+      await fetchBalanceAndNonce();
+    } finally {
+      setRefreshing(false);
+    }
   }, [fetchBalanceAndNonce]);
 
   const getPersistentNonce = async (address: string): Promise<number> => {
