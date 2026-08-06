@@ -6,7 +6,9 @@ import {
   Wart,
   RoundedFee,
   serializeForApi,
+  TransactionContext,
   type TransactionJson,
+  type NonceId,
 } from 'warthog-ts';
 
 import { API_ENDPOINTS, DEFAULT_FEE, SATOSHI_MULTIPLIER } from '../constants';
@@ -19,6 +21,7 @@ export function createWarthogApi(node: string): WarthogApi {
 }
 
 // Fetch chain head (current block height + pin)
+// Handles mainnet flat pin fields and DeFi nested data.chainHead.
 export const fetchChainHead = async (node: string): Promise<BlockData> => {
   const api = createWarthogApi(node);
   const result = await api.getChainHead();
@@ -28,15 +31,34 @@ export const fetchChainHead = async (node: string): Promise<BlockData> => {
 
   const pin = normalizeChainPin(result.data);
   const data = result.data as BlockData & { chainHead?: BlockData };
+  const nested = data.chainHead;
 
   return {
-    height: Number(data.height ?? pin.pinHeight ?? 0),
+    height: Number(nested?.height ?? data.height ?? pin.pinHeight ?? 0),
     pinHeight: pin.pinHeight,
     pinHash: pin.pinHash,
-    timestamp: data.timestamp,
-    utc: data.utc,
+    timestamp: data.timestamp ?? nested?.timestamp,
+    utc: data.utc ?? nested?.utc,
   };
 };
+
+/**
+ * Build a TransactionContext using a normalized chain pin.
+ * Prefer this over api.createTransactionContext when pin was already fetched,
+ * and always use normalizeChainPin so mainnet sends work.
+ */
+export async function createTxContext(
+  node: string,
+  fee: RoundedFee,
+  nonce: NonceId
+): Promise<TransactionContext> {
+  const pin = await fetchChainHead(node);
+  return new TransactionContext(
+    { pinHash: pin.pinHash, pinHeight: pin.pinHeight },
+    fee,
+    nonce
+  );
+}
 
 type WartBalancePayload = {
   wart?: unknown;
@@ -131,14 +153,21 @@ export const fetchFeeE8 = async (node: string, feeWart: string): Promise<number>
 
   const fee = wartFee.roundedFee(true);
   const api = createWarthogApi(node);
-  const minRes = await api.getMinFee();
-
-  if (minRes.success) {
-    const minE8 = BigInt(minRes.data.minFee.E8);
-    if (fee.E8 < minE8) {
-      const minStr = minRes.data.minFee.str || 'node minimum';
-      throw new Error(`Fee must be at least ${minStr}`);
+  // Min-fee endpoints are flaky on some public nodes (502 HTML). Never hard-fail send on that.
+  try {
+    const minRes = await api.getMinFee();
+    if (minRes.success && minRes.data?.minFee?.E8 != null) {
+      const minE8 = BigInt(minRes.data.minFee.E8);
+      if (fee.E8 < minE8) {
+        const minStr = minRes.data.minFee.str || 'node minimum';
+        throw new Error(`Fee must be at least ${minStr}`);
+      }
     }
+  } catch (err) {
+    if (err instanceof Error && /Fee must be at least/i.test(err.message)) {
+      throw err;
+    }
+    // ignore unreachable min-fee
   }
 
   return Number(fee.E8);

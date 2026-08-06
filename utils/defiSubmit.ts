@@ -12,7 +12,7 @@ import {
   encodeLimitPrice,
   type TransactionJson,
 } from 'warthog-ts';
-import { createWarthogApi, fetchFeeE8, submitWarthogTransaction } from './api';
+import { createTxContext, fetchFeeE8, submitWarthogTransaction } from './api';
 import { isValidAddress } from './crypto';
 import { normalizeAssetHash, isValidAssetHash } from './warthogFormat';
 import type { WalletData } from '../types';
@@ -37,8 +37,7 @@ export async function signAndSubmitDefiTx(
   if (!nonce) throw new Error('Invalid nonce');
 
   const account = Account.fromPrivateKeyHex(wallet.privateKey);
-  const api = createWarthogApi(node);
-  const ctx = await api.createTransactionContext(roundedFee, nonce);
+  const ctx = await createTxContext(node, roundedFee, nonce);
   const tx = buildTx(ctx, account);
   const result = await submitWarthogTransaction(node, tx);
   return { txHash: result.txHash, nonce: nonceId };

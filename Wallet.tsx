@@ -49,7 +49,7 @@ import ToolsModal from './components/tools/ToolsModal';
 import { defiStyles, defiColors } from './components/defi/defiStyles';
 import { Account, Address, Wart, NonceId, RoundedFee } from 'warthog-ts';
 import { generateWallet as generateWalletUtil, deriveWallet as deriveWalletUtil, importWallet as importWalletUtil, decryptWallet, encryptWallet, isValidAddress } from './utils/crypto';
-import { createWarthogApi, fetchChainHead, fetchAccountBalance, fetchUsdPrice, fetchFeeE8, submitWarthogTransaction } from './utils/api';
+import { createTxContext, fetchChainHead, fetchAccountBalance, fetchUsdPrice, fetchFeeE8, submitWarthogTransaction } from './utils/api';
 import {
   amountExceedsAvailable,
   insufficientFreeBalanceMessage,
@@ -829,8 +829,8 @@ const Wallet: React.FC = () => {
       if (!nonce) throw new Error('Invalid nonce');
 
       const account = Account.fromPrivateKeyHex(wallet.privateKey);
-      const api = createWarthogApi(selectedNode);
-      const ctx = await api.createTransactionContext(roundedFee, nonce);
+      // Use normalized pin (mainnet flat + DeFi nested) — do not rely on nested-only chainHead
+      const ctx = await createTxContext(selectedNode, roundedFee, nonce);
       const tx = ctx.transferWart(account, recipient, wartAmount);
       const res = await submitWarthogTransaction(selectedNode, tx);
       const sentTxHash = res.txHash;

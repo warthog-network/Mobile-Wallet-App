@@ -5,6 +5,7 @@ export const DEFI_TESTNET_URL = 'https://warthog-defitestnet.duckdns.org';
 export const WARTHOG_NODES = [
   'https://warthognode.duckdns.org',
   DEFI_TESTNET_URL,
+  // Backup mainnet (may be offline; keep as optional fallback)
   'http://217.182.64.43:3001',
 ] as const;
 

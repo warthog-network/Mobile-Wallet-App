@@ -9,7 +9,7 @@ import {
 } from 'warthog-ts';
 import { isValidAddress } from '../utils/crypto';
 import {
-  createWarthogApi,
+  createTxContext,
   fetchFeeE8,
   submitWarthogTransaction,
 } from '../utils/api';
@@ -89,8 +89,7 @@ export const useSendTransaction = (
       }
 
       const account = Account.fromPrivateKeyHex(wallet.privateKey);
-      const api = createWarthogApi(selectedNode);
-      const ctx = await api.createTransactionContext(roundedFee, nonce);
+      const ctx = await createTxContext(selectedNode, roundedFee, nonce);
       const tx = ctx.transferWart(account, recipient, wartAmount);
       const result = await submitWarthogTransaction(selectedNode, tx);
       const txHashStr = result.txHash;
