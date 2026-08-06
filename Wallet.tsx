@@ -822,7 +822,8 @@ const Wallet: React.FC = () => {
 
       const feeWart = fee || DEFAULT_FEE;
       const feeE8 = await fetchFeeE8(selectedNode, feeWart);
-      const roundedFee = RoundedFee.fromE8(BigInt(feeE8), true);
+      // feeE8 already node-rounded; do not ceil-re-round (0.01 → 1000448 bug)
+      const roundedFee = RoundedFee.fromE8(BigInt(feeE8), false);
       if (!roundedFee) throw new Error('Invalid fee');
 
       const nonce = NonceId.fromNumber(nonceId);

@@ -143,7 +143,8 @@ export const fetchUsdPrice = async (): Promise<number> => {
   }
 };
 
-// Resolve a valid rounded fee E8 using warthog-ts + node minimum
+// Resolve a valid rounded fee E8 using the node's encode16bit tool (exact compact fee).
+// Local ceil-rounding can disagree with the node (e.g. 0.01 → 1000448 vs 999936).
 export const fetchFeeE8 = async (node: string, feeWart: string): Promise<number> => {
   const feeStr = feeWart.trim() || DEFAULT_FEE;
   const wartFee = Wart.parse(feeStr);
@@ -151,8 +152,30 @@ export const fetchFeeE8 = async (node: string, feeWart: string): Promise<number>
     throw new Error('Invalid fee amount');
   }
 
-  const fee = wartFee.roundedFee(true);
   const api = createWarthogApi(node);
+
+  // Prefer node-authoritative 16-bit rounding (mainnet + DeFi response shapes).
+  try {
+    const enc = await api.getNodePath(
+      `/tools/encode16bit/from_string/${encodeURIComponent(feeStr)}`
+    );
+    if (enc.success) {
+      const data = enc.data as {
+        roundedE8?: number | string;
+        rounded?: { E8?: number | string };
+      };
+      const rounded = data.roundedE8 ?? data.rounded?.E8;
+      if (rounded != null) {
+        return Number(rounded);
+      }
+    }
+  } catch {
+    // fall through to local floor rounding
+  }
+
+  // Floor matches node for common defaults like 0.01 better than ceil.
+  const fee = wartFee.roundedFee(false);
+
   // Min-fee endpoints are flaky on some public nodes (502 HTML). Never hard-fail send on that.
   try {
     const minRes = await api.getMinFee();
@@ -167,7 +190,6 @@ export const fetchFeeE8 = async (node: string, feeWart: string): Promise<number>
     if (err instanceof Error && /Fee must be at least/i.test(err.message)) {
       throw err;
     }
-    // ignore unreachable min-fee
   }
 
   return Number(fee.E8);

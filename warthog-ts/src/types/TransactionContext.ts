@@ -60,6 +60,8 @@ export class TransactionContext {
         ]);
         const sig = account.signBytes(binary);
 
+        // Mainnet accepts amountE8 (legacy / typed); DeFi accepts wartE8.
+        // Send both so the same payload works on either node generation.
         return {
             type: 'wartTransfer',
             pinHeight: this.chainPin.pinHeight,
@@ -67,6 +69,7 @@ export class TransactionContext {
             feeE8: this.fee.E8,
             toAddr: toAddr.hex,
             wartE8: wart.E8,
+            amountE8: wart.E8,
             signature65: sig.signature,
         };
     }

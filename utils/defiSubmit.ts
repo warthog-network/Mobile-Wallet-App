@@ -30,7 +30,8 @@ export async function signAndSubmitDefiTx(
   buildTx: (ctx: TransactionContext, account: Account) => TransactionJson
 ): Promise<{ txHash: string; nonce: number }> {
   const feeE8 = await fetchFeeE8(node, feeWart);
-  const roundedFee = RoundedFee.fromE8(BigInt(feeE8), true);
+  // feeE8 already node-rounded; do not ceil-re-round
+  const roundedFee = RoundedFee.fromE8(BigInt(feeE8), false);
   if (!roundedFee) throw new Error('Invalid fee');
 
   const nonce = NonceId.fromNumber(nonceId);

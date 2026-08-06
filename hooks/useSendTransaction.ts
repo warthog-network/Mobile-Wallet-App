@@ -77,7 +77,8 @@ export const useSendTransaction = (
       }
 
       const feeE8 = await fetchFeeE8(selectedNode, fee);
-      const roundedFee = RoundedFee.fromE8(BigInt(feeE8), true);
+      // feeE8 already node-rounded; do not ceil-re-round
+      const roundedFee = RoundedFee.fromE8(BigInt(feeE8), false);
       if (!roundedFee) {
         throw new Error('Invalid fee');
       }
