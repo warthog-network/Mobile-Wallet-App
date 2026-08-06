@@ -44,7 +44,7 @@
     "react-native-svg": "15.12.1",
     "react-native-web": "^0.21.0",
     "stream-browserify": "^3.0.0",
-    "warthog-ts": "file:../warthog-ts"
+    "warthog-ts": "file:./warthog-ts"
   },
   "devDependencies": {
     "@react-native-community/cli": "^20.1.1",
