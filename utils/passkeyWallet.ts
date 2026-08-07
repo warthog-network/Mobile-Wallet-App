@@ -127,9 +127,9 @@ export function inspectWalletBlob(raw: string | null | undefined): BlobInspect {
 
 export function authBadgeForBlob(raw: string | null | undefined): string {
   const info = inspectWalletBlob(raw);
-  if (info.require2fa) return 'Password + biometrics (2FA)';
-  if (info.hasPasskey && info.hasPassword) return 'Biometrics or password';
-  if (info.hasPasskey) return 'Biometrics (this device)';
+  if (info.require2fa) return 'Password + passkey (2FA)';
+  if (info.hasPasskey && info.hasPassword) return 'Passkey or password';
+  if (info.hasPasskey) return 'Passkey';
   if (info.hasPassword) return 'Password';
   return 'Saved';
 }
@@ -164,23 +164,17 @@ export async function isBiometricsAvailable(): Promise<boolean> {
   }
 }
 
+/**
+ * UI label for device-auth unlock. Always "passkey" — do not guess Face ID /
+ * fingerprint / PIN; the OS prompt already names the method.
+ */
 export async function biometricsLabel(): Promise<string> {
-  try {
-    const types = await LocalAuthentication.supportedAuthenticationTypesAsync();
-    if (types.includes(LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION)) {
-      return 'Face ID';
-    }
-    if (types.includes(LocalAuthentication.AuthenticationType.FINGERPRINT)) {
-      return 'Fingerprint';
-    }
-    if (types.includes(LocalAuthentication.AuthenticationType.IRIS)) {
-      return 'Iris';
-    }
-  } catch {
-    /* ignore */
-  }
-  // Device PIN / pattern / password still works as passkey-equivalent unlock on mobile
-  return 'Device lock';
+  return 'passkey';
+}
+
+/** Sync alias for places that only need the constant string. */
+export function passkeyLabel(): string {
+  return 'passkey';
 }
 
 async function assertBiometrics(promptMessage: string): Promise<void> {
@@ -190,7 +184,7 @@ async function assertBiometrics(promptMessage: string): Promise<void> {
       const level = await LocalAuthentication.getEnrolledLevelAsync();
       if (level === LocalAuthentication.SecurityLevel.NONE) {
         throw new Error(
-          'Set a screen lock (PIN, pattern, password, fingerprint, or Face ID) in system settings first',
+          'Set a screen lock in system settings first, then try passkey again',
         );
       }
     } else {
@@ -198,23 +192,23 @@ async function assertBiometrics(promptMessage: string): Promise<void> {
       const hasHardware = await LocalAuthentication.hasHardwareAsync();
       if (!enrolled && !hasHardware) {
         throw new Error(
-          'Biometrics / device lock are not available — enable them in system settings',
+          'Passkey unlock is not available — enable a screen lock in system settings',
         );
       }
     }
   } catch (e) {
-    if (e instanceof Error && /screen lock|system settings|not available/i.test(e.message)) {
+    if (e instanceof Error && /screen lock|system settings|not available|passkey/i.test(e.message)) {
       throw e;
     }
     // Permission / API probe failed — still try authenticateAsync below
   }
 
   const result = await LocalAuthentication.authenticateAsync({
-    promptMessage,
+    promptMessage: promptMessage || 'Unlock with passkey',
     cancelLabel: 'Cancel',
-    // Allow PIN / pattern / password when biometrics fail or are not enrolled
+    // Allow device credential fallback when biometrics fail or are not enrolled
     disableDeviceFallback: false,
-    fallbackLabel: 'Use device PIN',
+    fallbackLabel: 'Use screen lock',
   });
   if (!result.success) {
     throw new Error(

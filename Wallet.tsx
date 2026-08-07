@@ -414,7 +414,7 @@ const Wallet: React.FC = () => {
   const [selectedLoginHasPassword, setSelectedLoginHasPassword] = useState(true);
   const [selectedLoginRequire2fa, setSelectedLoginRequire2fa] = useState(false);
   const [biometricsSupported, setBiometricsSupported] = useState(false);
-  const [bioLabel, setBioLabel] = useState('Biometrics');
+  const [bioLabel, setBioLabel] = useState('passkey');
   const [enableBioOnSave, setEnableBioOnSave] = useState(true);
   const [require2faOnSave, setRequire2faOnSave] = useState(false);
   const [enableBioOnCreate, setEnableBioOnCreate] = useState(true);
@@ -445,7 +445,7 @@ const Wallet: React.FC = () => {
     } catch {
       // Never hide the whole security UI because a probe failed
       setBiometricsSupported(true);
-      setBioLabel('Device lock');
+      setBioLabel('passkey');
       return true;
     }
   }, []);
@@ -892,10 +892,10 @@ const Wallet: React.FC = () => {
       }
       setCurrentWalletName(tag);
       Alert.alert(
-        want2fa ? '✅ 2FA enabled' : '✅ Biometrics enabled',
+        want2fa ? '✅ 2FA enabled' : '✅ Passkey enabled',
         want2fa
-          ? `Next login: password + ${bioLabel} for “${tag}”`
-          : `Next login: Unlock with ${bioLabel} for “${tag}”`,
+          ? `Next login: password + passkey for “${tag}”`
+          : `Next login: Unlock with passkey for “${tag}”`,
       );
     } catch (e: any) {
       Alert.alert('Failed', e.message || 'Could not enable biometrics');
@@ -1276,9 +1276,9 @@ const Wallet: React.FC = () => {
         : 'Create with biometrics (optional password / 2FA).'
       : accessPath === 'login'
         ? selectedLoginRequire2fa
-          ? `2FA: enter password, then confirm with ${bioLabel}.`
+          ? '2FA: enter password, then confirm with passkey.'
           : selectedLoginHasPasskey
-            ? `Tap Unlock with ${bioLabel}, or use password if you set one.`
+            ? 'Tap Unlock with passkey, or use password if you set one.'
             : 'Choose a saved wallet and enter its password.'
         : accessPath === 'create'
           ? 'Name the wallet first. Then unlock options, then write down your seed.'
@@ -1324,7 +1324,7 @@ const Wallet: React.FC = () => {
                   <Text style={styles.bigButtonPrimaryText}>Unlock saved wallet</Text>
                   <Text style={[styles.label, { textAlign: 'center', marginTop: 4, marginBottom: 0 }]}>
                     {savedWalletNames.length} on this device
-                    {biometricsSupported ? ` · ${bioLabel} ready` : ''}
+                    {biometricsSupported ? ' · passkey ready' : ''}
                   </Text>
                 </TouchableOpacity>
               )}
@@ -1447,7 +1447,7 @@ const Wallet: React.FC = () => {
                   {selectedLoginRequire2fa ? (
                     <>
                       <Text style={styles.label}>
-                        2FA is on: password and {bioLabel.toLowerCase()}.
+                        2FA is on: password and passkey.
                       </Text>
                       <StyledTextInput
                         placeholder="Wallet password"
@@ -1463,7 +1463,7 @@ const Wallet: React.FC = () => {
                         <Text style={styles.bigButtonPrimaryText}>
                           {passkeyBusy
                             ? 'Waiting…'
-                            : `Unlock with password + ${bioLabel}`}
+                            : 'Unlock with password + passkey'}
                         </Text>
                       </TouchableOpacity>
                     </>
@@ -1480,7 +1480,7 @@ const Wallet: React.FC = () => {
                           <Text style={styles.bigButtonPrimaryText}>
                             {passkeyBusy
                               ? 'Waiting…'
-                              : `Unlock with ${bioLabel} (passkey)`}
+                              : 'Unlock with passkey'}
                           </Text>
                         </TouchableOpacity>
                       )}
@@ -1787,7 +1787,7 @@ const Wallet: React.FC = () => {
             {secureStep === 'save' && (
               <>
                 <Text style={styles.label}>
-                  Choose how you&apos;ll unlock next time. Biometrics are registered once after you write down your seed.
+                  Choose how you&apos;ll unlock next time. Passkey is registered once after you write down your seed.
                 </Text>
                 <Text style={styles.label}>Wallet Name</Text>
                 <StyledTextInput placeholder="e.g. main" value={walletName} onChangeText={setWalletName} />
@@ -1800,7 +1800,7 @@ const Wallet: React.FC = () => {
                 >
                   <View style={{ width: 20, height: 20, borderWidth: 1, borderColor: defiColors.goldHover, marginRight: 10, backgroundColor: enableBioOnCreate ? defiColors.goldHover : 'transparent' }} />
                   <Text style={{ color: theme.colors.textSecondary, fontSize: 14 }}>
-                    Enable passkey ({bioLabel}) unlock
+                    Enable passkey unlock
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
@@ -1812,7 +1812,7 @@ const Wallet: React.FC = () => {
                 >
                   <View style={{ width: 20, height: 20, borderWidth: 1, borderColor: defiColors.goldHover, marginRight: 10, backgroundColor: require2faOnCreate ? defiColors.goldHover : 'transparent' }} />
                   <Text style={{ color: theme.colors.textSecondary, fontSize: 14 }}>
-                    Optional 2FA: require password + {bioLabel}
+                    Optional 2FA: require password + passkey
                   </Text>
                 </TouchableOpacity>
                 <Text style={styles.label}>
@@ -1919,9 +1919,9 @@ const Wallet: React.FC = () => {
                 >
                   <Text style={styles.bigButtonPrimaryText}>
                     {passkeyBusy
-                      ? 'Waiting for biometrics…'
+                      ? 'Waiting for passkey…'
                       : enableBioOnCreate
-                        ? `Save & open (register ${bioLabel} once)`
+                        ? 'Save & open (register passkey once)'
                         : 'Save & open wallet'}
                   </Text>
                 </TouchableOpacity>
@@ -1979,7 +1979,7 @@ const Wallet: React.FC = () => {
             >
               <View style={{ width: 20, height: 20, borderWidth: 1, borderColor: defiColors.goldHover, marginRight: 10, backgroundColor: enableBioOnSave ? defiColors.goldHover : 'transparent' }} />
               <Text style={{ color: theme.colors.textSecondary, fontSize: 14 }}>
-                Enable passkey ({bioLabel}) unlock
+                Enable passkey unlock
               </Text>
             </TouchableOpacity>
             {enableBioOnSave && (
@@ -1989,16 +1989,16 @@ const Wallet: React.FC = () => {
               >
                 <View style={{ width: 20, height: 20, borderWidth: 1, borderColor: defiColors.goldHover, marginRight: 10, backgroundColor: require2faOnSave ? defiColors.goldHover : 'transparent' }} />
                 <Text style={{ color: theme.colors.textSecondary, fontSize: 14 }}>
-                  2FA: require password + {bioLabel}
+                  2FA: require password + passkey
                 </Text>
               </TouchableOpacity>
             )}
             <TouchableOpacity style={styles.bigButton} onPress={() => void saveCurrentWallet()} disabled={passkeyBusy}>
               <Text style={styles.bigButtonText}>
                 {passkeyBusy
-                  ? 'Waiting for biometrics…'
+                  ? 'Waiting for passkey…'
                   : enableBioOnSave
-                    ? `Save & register passkey (${bioLabel})`
+                    ? 'Save & register passkey'
                     : Platform.OS === 'web'
                       ? 'Save (not secure in this web demo)'
                       : 'Save Securely (Device)'}
@@ -2012,7 +2012,7 @@ const Wallet: React.FC = () => {
               <Text style={styles.bigButtonText}>
                 {passkeyBusy
                   ? 'Waiting…'
-                  : `Enable passkey only (${bioLabel})`}
+                  : 'Enable passkey only'}
               </Text>
             </TouchableOpacity>
             {modalError && <Text style={styles.error}>{modalError}</Text>}

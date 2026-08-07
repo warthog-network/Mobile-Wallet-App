@@ -142,8 +142,8 @@ const ToolsModal: React.FC<Props> = ({
           <View style={defiStyles.modalAccent} />
           <Text style={defiStyles.modalTitle}>Tools</Text>
           <Text style={styles.intro}>
-            Passkey on mobile = biometrics or device lock (Face ID / fingerprint / PIN). Enable it
-            under Passkey / 2FA, same idea as wartbunker Tools.
+            Enable passkey unlock and optional 2FA under Passkey / 2FA — same idea as wartbunker Tools.
+            Your phone chooses how to confirm (the system prompt names the method).
           </Text>
 
           <View style={styles.toolTabs}>
@@ -176,32 +176,28 @@ const ToolsModal: React.FC<Props> = ({
                     : styles.panelWarn,
               ]}
             >
-              <Text style={styles.panelTitle}>Passkey / biometrics &amp; 2FA</Text>
+              <Text style={styles.panelTitle}>Passkey &amp; 2FA</Text>
               <Text style={styles.panelDesc}>
-                On mobile, “passkey” means {security.bioLabel || 'device lock'} unlock for “
-                {security.walletName || 'this wallet'}”. Optional 2FA = password +{' '}
-                {security.bioLabel || 'device lock'} every login (same as wartbunker Tools).
+                Enable passkey unlock for “{security.walletName || 'this wallet'}”. Optional 2FA = password + passkey every login (same as wartbunker Tools).
               </Text>
 
               {security.require2fa ? (
                 <Text style={styles.statusOk}>
-                  ✓ 2FA active — password then {security.bioLabel} at login
+                  ✓ 2FA active — password then passkey at login
                 </Text>
               ) : security.hasPasskey ? (
                 <Text style={styles.statusOk}>
-                  ✓ Passkey ({security.bioLabel}) unlock enabled
+                  ✓ Passkey unlock enabled
                 </Text>
               ) : (
                 <Text style={styles.panelDesc}>
-                  Not enabled yet. Tap enable below — you will get a system prompt (fingerprint /
-                  Face ID / PIN).
+                  Not enabled yet. Tap enable below — your phone will show its own passkey prompt.
                 </Text>
               )}
 
               {!security.biometricsSupported ? (
                 <Text style={[styles.resultErrText, { marginBottom: 12 }]}>
-                  No biometrics/device lock detected yet. Set a screen lock in Android settings,
-                  then reopen Tools — or try Enable anyway.
+                  No screen lock detected yet. Set one in system settings, then reopen Tools — or try Enable anyway.
                 </Text>
               ) : null}
 
@@ -209,7 +205,7 @@ const ToolsModal: React.FC<Props> = ({
                 <View style={{ flex: 1, paddingRight: 12 }}>
                   <Text style={styles.switchLabel}>Require 2FA</Text>
                   <Text style={styles.switchHint}>
-                    Password and {security.bioLabel} every login
+                    Password and passkey every login
                   </Text>
                 </View>
                 <Switch
@@ -252,11 +248,11 @@ const ToolsModal: React.FC<Props> = ({
                   <Text style={styles.actionBtnText}>
                     {want2fa
                       ? security.hasPasskey
-                        ? `Update passkey + 2FA`
-                        : `Enable passkey with 2FA`
+                        ? 'Update passkey + 2FA'
+                        : 'Enable passkey with 2FA'
                       : security.hasPasskey
-                        ? `Re-register passkey (${security.bioLabel})`
-                        : `Enable passkey (${security.bioLabel})`}
+                        ? 'Re-register passkey'
+                        : 'Enable passkey'}
                   </Text>
                 )}
               </TouchableOpacity>
@@ -271,7 +267,7 @@ const ToolsModal: React.FC<Props> = ({
                   disabled={securityBusy}
                 >
                   <Text style={styles.actionBtnSecondaryText}>
-                    Enable 2FA (password + {security.bioLabel})
+                    Enable 2FA (password + passkey)
                   </Text>
                 </TouchableOpacity>
               ) : null}
