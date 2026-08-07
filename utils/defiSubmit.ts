@@ -111,6 +111,8 @@ export async function submitLimitSwap(params: {
   assetDecimals: number;
   limitHex?: string;
   limitPrice?: string;
+  /** Prefer ceil when buying (willing to pay more). */
+  encodeCeil?: boolean;
 }) {
   const hash = normalizeAssetHash(params.assetHash);
   if (!isValidAssetHash(hash)) throw new Error('Asset hash must be exactly 64 hex characters');
@@ -126,7 +128,12 @@ export async function submitLimitSwap(params: {
     if (!params.limitPrice?.trim()) {
       throw new Error('Encoded limit price is required — enter price + decimals and tap Encode');
     }
-    return encodeLimitPrice(params.limitPrice, params.assetDecimals);
+    const ceil = params.encodeCeil ?? params.isBuy;
+    try {
+      return encodeLimitPrice(params.limitPrice, params.assetDecimals, { ceil });
+    } catch {
+      return encodeLimitPrice(params.limitPrice, params.assetDecimals, { ceil: true });
+    }
   })();
 
   const limit = Price.fromHex(limitHex);

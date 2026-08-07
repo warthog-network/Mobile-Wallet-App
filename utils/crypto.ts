@@ -8,6 +8,7 @@ import { Account, Address } from 'warthog-ts';
 
 import { WalletData } from '../types';
 import { DERIVATION_PATHS, SATOSHI_MULTIPLIER } from '../constants';
+import { getPasswordCipherFromBlob } from './passkeyWallet';
 
 function accountToWalletData(
   account: Account,
@@ -113,18 +114,26 @@ export const importWallet = (privateKey: string): WalletData => {
   return accountToWalletData(account);
 };
 
-// Encrypt wallet data
+// Encrypt wallet data (password ciphertext; may be embedded in multi-auth envelopes)
 export const encryptWallet = (walletData: WalletData, password: string): string => {
   return CryptoJS.AES.encrypt(JSON.stringify(walletData), password).toString();
 };
 
-// Decrypt wallet data
+// Decrypt wallet data (raw CryptoJS cipher or multi-auth envelope password field)
 export const decryptWallet = (encrypted: string, password: string): WalletData => {
   try {
-    const bytes = CryptoJS.AES.decrypt(encrypted, password);
+    const cipher = getPasswordCipherFromBlob(encrypted);
+    if (!cipher) {
+      throw new Error(
+        'This wallet has no password unlock — use biometrics, or re-save with a password',
+      );
+    }
+    const bytes = CryptoJS.AES.decrypt(cipher, password);
     const decrypted = bytes.toString(CryptoJS.enc.Utf8);
+    if (!decrypted) throw new Error('Wrong password or invalid encrypted data');
     return JSON.parse(decrypted);
-  } catch {
+  } catch (e: any) {
+    if (e?.message && !/JSON|Utf8|Malformed/i.test(e.message)) throw e;
     throw new Error('Wrong password or invalid encrypted data');
   }
 };

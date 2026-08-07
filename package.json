@@ -1,6 +1,6 @@
 {
   "name": "warthog-wallet",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "main": "index.ts",
   "scripts": {
     "start": "REACT_NATIVE_PACKAGER_HOSTNAME=$(hostname -I | awk '{print $1}') expo start --lan",
@@ -31,6 +31,7 @@
     "expo-crypto": "~15.0.9",
     "expo-document-picker": "~14.0.8",
     "expo-file-system": "~19.0.23",
+    "expo-local-authentication": "~17.0.8",
     "expo-network": "~8.0.8",
     "expo-secure-store": "~15.0.8",
     "expo-sharing": "~14.0.8",

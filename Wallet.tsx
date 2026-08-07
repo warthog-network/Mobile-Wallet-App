@@ -49,6 +49,18 @@ import ToolsModal from './components/tools/ToolsModal';
 import { defiStyles, defiColors } from './components/defi/defiStyles';
 import { Account, Address, Wart, NonceId, RoundedFee } from 'warthog-ts';
 import { generateWallet as generateWalletUtil, deriveWallet as deriveWalletUtil, importWallet as importWalletUtil, decryptWallet, encryptWallet, isValidAddress } from './utils/crypto';
+import {
+  authBadgeForBlob,
+  biometricsLabel,
+  buildEnvelopeWithBiometrics,
+  decryptWithBiometrics,
+  envelopeWithPassword,
+  inspectWalletBlob,
+  isBiometricsAvailable,
+  serializeEnvelope,
+  tryParseEnvelope,
+  unlockEnvelopeWith2fa,
+} from './utils/passkeyWallet';
 import { createTxContext, fetchChainHead, fetchAccountBalance, fetchUsdPrice, fetchFeeE8, submitWarthogTransaction } from './utils/api';
 import {
   amountExceedsAvailable,
@@ -299,11 +311,16 @@ const Wallet: React.FC = () => {
   const [nextNonce, setNextNonce] = useState<number>(0);
   const [currentBlockHeight, setCurrentBlockHeight] = useState<number>(0);
   const [selectedNode, setSelectedNode] = useState<NodeUrl>(WARTHOG_NODES[0]);
+  /** Guided access paths (wartbunker BalanceCardAccess parity) */
+  type AccessPath = 'hub' | 'login' | 'create' | 'have' | 'derive' | 'import' | 'load';
+  const [accessPath, setAccessPath] = useState<AccessPath>('hub');
   const [walletAction, setWalletAction] = useState<'create' | 'derive' | 'import' | 'login'>('create');
   const [mnemonic, setMnemonic] = useState('');
   const [privateKeyInput, setPrivateKeyInput] = useState('');
   const [wordCount, setWordCount] = useState('12');
   const [pathType, setPathType] = useState<'hardened' | 'normal'>('hardened');
+  const [secureStep, setSecureStep] = useState<'save' | 'backup'>('save');
+  const [consentToClose, setConsentToClose] = useState(false);
   const [toAddr, setToAddr] = useState('');
   const [amount, setAmount] = useState('');
   const [fee, setFee] = useState('0.01');
@@ -392,6 +409,17 @@ const Wallet: React.FC = () => {
   const [creatingWallet, setCreatingWallet] = useState(false);
   const [selectedWalletToLogin, setSelectedWalletToLogin] = useState<string>('');
   const [showWalletSelection, setShowWalletSelection] = useState(false);
+  const [selectedLoginBadge, setSelectedLoginBadge] = useState('');
+  const [selectedLoginHasPasskey, setSelectedLoginHasPasskey] = useState(false);
+  const [selectedLoginHasPassword, setSelectedLoginHasPassword] = useState(true);
+  const [selectedLoginRequire2fa, setSelectedLoginRequire2fa] = useState(false);
+  const [biometricsSupported, setBiometricsSupported] = useState(false);
+  const [bioLabel, setBioLabel] = useState('Biometrics');
+  const [enableBioOnSave, setEnableBioOnSave] = useState(true);
+  const [require2faOnSave, setRequire2faOnSave] = useState(false);
+  const [enableBioOnCreate, setEnableBioOnCreate] = useState(true);
+  const [require2faOnCreate, setRequire2faOnCreate] = useState(false);
+  const [passkeyBusy, setPasskeyBusy] = useState(false);
 
   // Address Book state
   const [showAddressBook, setShowAddressBook] = useState(false);
@@ -409,6 +437,16 @@ const Wallet: React.FC = () => {
   const [downloadPassword, setDownloadPassword] = useState('');
 
   useEffect(() => {
+    void (async () => {
+      const ok = await isBiometricsAvailable();
+      setBiometricsSupported(ok);
+      setEnableBioOnSave(ok);
+      setEnableBioOnCreate(ok);
+      setBioLabel(await biometricsLabel());
+    })();
+  }, []);
+
+  useEffect(() => {
     const loadSavedWallets = async () => {
       const namesStr = await storage.getItemAsync(SECURE_STORE_KEYS.walletNames);
       if (namesStr) {
@@ -416,6 +454,7 @@ const Wallet: React.FC = () => {
         setSavedWalletNames(names);
         if (names.length > 0) {
           setWalletAction('login');
+          setAccessPath('hub');
         }
       }
     };
@@ -568,10 +607,38 @@ const Wallet: React.FC = () => {
     }
   }, [bumpNonce, wallet?.address, fetchBalanceAndNonce, isDefi, defi.refreshDefiData]);
 
+  const goAccessPath = (next: AccessPath) => {
+    setAccessPath(next);
+    setError(null);
+    setPassword('');
+    setConfirmPassword('');
+    setMnemonic('');
+    setPrivateKeyInput('');
+    setUploadedFileContent(null);
+    setUploadedFileName(null);
+    setShowWalletSelection(false);
+    setSelectedWalletToLogin('');
+    if (next === 'login') setWalletAction('login');
+    if (next === 'create') setWalletAction('create');
+    if (next === 'derive') setWalletAction('derive');
+    if (next === 'import') setWalletAction('import');
+  };
+
   const handleWalletAction = async () => {
     setError(null);
+    if (walletAction === 'create' && !walletName.trim()) {
+      setError('Enter a wallet name first (e.g. main)');
+      return;
+    }
+    if (walletAction === 'derive' && !mnemonic.trim()) {
+      setError('Enter your seed phrase');
+      return;
+    }
+    if (walletAction === 'import' && privateKeyInput.length !== PRIVATE_KEY_LENGTH) {
+      setError('Private key must be exactly 64 hex characters');
+      return;
+    }
     setCreatingWallet(true);
-    console.log('Wallet creation started - spinner should show');
 
     // Small delay to ensure spinner renders before heavy crypto operations
     await new Promise(resolve => setTimeout(resolve, 100));
@@ -583,7 +650,7 @@ const Wallet: React.FC = () => {
       } else if (walletAction === 'derive') {
         data = deriveWalletUtil(mnemonic, Number(wordCount), pathType);
         setMnemonic('');
-      } else if (walletAction === 'import' && privateKeyInput.length === PRIVATE_KEY_LENGTH) {
+      } else if (walletAction === 'import') {
         data = importWalletUtil(privateKeyInput);
         setPrivateKeyInput('');
       } else {
@@ -591,6 +658,8 @@ const Wallet: React.FC = () => {
       }
       setWalletData(data);
       setSaveWalletConsent(false);
+      setConsentToClose(false);
+      setSecureStep('save'); // unlock options first (wartbunker), then seed backup
       setShowModal(true);
     } catch (e: any) {
       Alert.alert('Wallet Creation Failed', e.message);
@@ -599,45 +668,167 @@ const Wallet: React.FC = () => {
     }
   };
 
+  const persistNamedWallet = async (
+    data: WalletData,
+    name: string,
+    pwd: string | null,
+    opts: { withBiometrics?: boolean; require2fa?: boolean },
+  ): Promise<string> => {
+    const withBio = Boolean(opts.withBiometrics);
+    const require2fa = Boolean(opts.require2fa);
+    if (!pwd && !withBio) throw new Error('Password or biometrics required to save');
+    if (require2fa && (!pwd || !withBio)) {
+      throw new Error('2FA needs both a password and biometrics');
+    }
+    if (pwd && getPasswordStrength(pwd).level < 3) {
+      throw new Error('Password is too weak. Must be at least Good strength.');
+    }
+
+    const existing = await storage.getItemAsync(SECURE_STORE_KEYS.wallet(name));
+    const prevEnv = existing ? tryParseEnvelope(existing) : null;
+    let passwordCipher: string | null = pwd ? encryptWallet(data, pwd) : null;
+    if (!passwordCipher && prevEnv?.password) passwordCipher = prevEnv.password;
+    if (!passwordCipher && existing && !prevEnv) passwordCipher = existing;
+
+    if (withBio) {
+      const { envelope } = await buildEnvelopeWithBiometrics(data, {
+        displayName: name,
+        existingPasswordCipher: passwordCipher,
+        previousEnvelope: prevEnv,
+        require2fa: require2fa && Boolean(passwordCipher || pwd),
+      });
+      if (require2fa && pwd) {
+        envelope.password = encryptWallet(data, pwd);
+        envelope.require2fa = true;
+      }
+      return serializeEnvelope(envelope);
+    }
+
+    if (pwd) {
+      const cipher = encryptWallet(data, pwd);
+      if (prevEnv?.passkey) {
+        return serializeEnvelope(
+          envelopeWithPassword(data, cipher, prevEnv, { require2fa }),
+        );
+      }
+      return cipher;
+    }
+    throw new Error('Nothing to save');
+  };
+
+  const continueToSeedBackup = () => {
+    setModalError(null);
+    if (!walletName.trim()) return setModalError('Enter a wallet name first');
+    const wantBio = enableBioOnCreate && biometricsSupported;
+    const wantPassword = Boolean(password);
+    if (!wantBio && !wantPassword) {
+      return setModalError('Enable biometrics and/or set a password for next login');
+    }
+    if (wantPassword) {
+      if (getPasswordStrength(password).level < 3) {
+        return setModalError('Password is too weak. Must be at least Good strength.');
+      }
+      if (password !== confirmPassword) return setModalError('Passwords do not match');
+    }
+    if (require2faOnCreate && (!wantPassword || !wantBio)) {
+      return setModalError('2FA needs both a password and biometrics');
+    }
+    if (savedWalletNames.includes(walletName) && walletAction === 'create') {
+      return setModalError('Wallet name already exists. Choose a different name.');
+    }
+    setSecureStep('backup');
+  };
+
   const saveWallet = async () => {
     setModalError(null);
-    if (!password) return setModalError('Enter a password');
+    if (!consentToClose && !saveWalletConsent) {
+      return setModalError('Confirm you have written down your seed phrase before closing');
+    }
     if (!walletName) return setModalError('Enter a wallet name');
-    if (savedWalletNames.includes(walletName)) return setModalError('Wallet name already exists. Choose a different name.');
-    if (getPasswordStrength(password).level < 3) return setModalError('Password is too weak. Must be at least Good strength.');
-    if (password !== confirmPassword) return setModalError('Passwords do not match');
-    if (!saveWalletConsent) return setModalError('Check the consent box to save');
+    if (savedWalletNames.includes(walletName) && walletAction === 'create') {
+      return setModalError('Wallet name already exists. Choose a different name.');
+    }
+    const wantBio = enableBioOnCreate && biometricsSupported;
+    if (!password && !wantBio) return setModalError('Enable biometrics and/or set a password');
+    if (password) {
+      if (getPasswordStrength(password).level < 3) return setModalError('Password is too weak. Must be at least Good strength.');
+      if (password !== confirmPassword) return setModalError('Passwords do not match');
+    }
+    if (require2faOnCreate && (!password || !wantBio)) {
+      return setModalError('2FA needs both a password and biometrics');
+    }
     if (!walletData) return setModalError('No wallet data available');
     try {
-      const enc = encryptWallet(walletData, password);
+      setPasskeyBusy(true);
+      const enc = await persistNamedWallet(walletData, walletName, password || null, {
+        withBiometrics: wantBio,
+        require2fa: require2faOnCreate,
+      });
       await storage.setItemAsync(SECURE_STORE_KEYS.wallet(walletName), enc);
-      const updatedNames = [...savedWalletNames, walletName];
+      const updatedNames = savedWalletNames.includes(walletName)
+        ? savedWalletNames
+        : [...savedWalletNames, walletName];
       setSavedWalletNames(updatedNames);
       await storage.setItemAsync(SECURE_STORE_KEYS.walletNames, JSON.stringify(updatedNames));
       setWallet(walletData);
       setCurrentWalletName(walletName);
       setIsLoggedIn(true);
       setShowModal(false);
+      setAccessPath('hub');
       fetchBalanceAndNonce(walletData.address);
       setPassword('');
       setConfirmPassword('');
       setWalletName('');
-      Alert.alert('✅ Wallet Saved Securely!');
+      setConsentToClose(false);
+      setSaveWalletConsent(false);
+      setSecureStep('save');
+      const badge = authBadgeForBlob(enc);
+      Alert.alert('✅ Wallet Saved Securely!', badge);
     } catch (e: any) {
       setModalError('Failed to save wallet: ' + e.message);
+    } finally {
+      setPasskeyBusy(false);
     }
+  };
+
+  const openWithoutSaving = () => {
+    if (!consentToClose && !saveWalletConsent) {
+      return setModalError('Confirm you have written down your seed phrase before closing');
+    }
+    if (!walletData) return setModalError('No wallet data available');
+    setWallet(walletData);
+    setIsLoggedIn(true);
+    setShowModal(false);
+    setAccessPath('hub');
+    fetchBalanceAndNonce(walletData.address);
+    setPassword('');
+    setConfirmPassword('');
+    setConsentToClose(false);
+    setSaveWalletConsent(false);
+    setSecureStep('save');
+    Alert.alert('Wallet open', 'Session only — not saved for next login');
   };
 
   const saveCurrentWallet = async () => {
     setModalError(null);
     if (!saveWalletName) return setModalError('Enter a wallet name');
     if (savedWalletNames.includes(saveWalletName) && saveWalletName !== currentWalletName) return setModalError('Wallet name already exists. Choose a different name.');
-    if (!savePassword) return setModalError('Enter a password');
-    if (getPasswordStrength(savePassword).level < 3) return setModalError('Password is too weak. Must be at least Good strength.');
-    if (savePassword !== saveConfirmPassword) return setModalError('Passwords do not match');
+    const wantBio = enableBioOnSave && biometricsSupported;
+    if (!savePassword && !wantBio) return setModalError('Enable biometrics and/or set a password');
+    if (savePassword) {
+      if (getPasswordStrength(savePassword).level < 3) return setModalError('Password is too weak. Must be at least Good strength.');
+      if (savePassword !== saveConfirmPassword) return setModalError('Passwords do not match');
+    }
+    if (require2faOnSave && (!savePassword || !wantBio)) {
+      return setModalError('2FA needs both a password and biometrics');
+    }
     if (!wallet) return setModalError('No wallet available');
     try {
-      const enc = encryptWallet(wallet, savePassword);
+      setPasskeyBusy(true);
+      const enc = await persistNamedWallet(wallet, saveWalletName, savePassword || null, {
+        withBiometrics: wantBio,
+        require2fa: require2faOnSave,
+      });
       await storage.setItemAsync(SECURE_STORE_KEYS.wallet(saveWalletName), enc);
       if (!savedWalletNames.includes(saveWalletName)) {
         const updatedNames = [...savedWalletNames, saveWalletName];
@@ -649,13 +840,36 @@ const Wallet: React.FC = () => {
       setSaveWalletName('');
       setSavePassword('');
       setSaveConfirmPassword('');
-      Alert.alert('✅ Wallet Saved Securely!');
+      Alert.alert('✅ Wallet Saved Securely!', authBadgeForBlob(enc));
       if (logoutAfterSave) {
         setLogoutAfterSave(false);
         performLogout();
       }
     } catch (e: any) {
       setModalError('Failed to save wallet: ' + e.message);
+    } finally {
+      setPasskeyBusy(false);
+    }
+  };
+
+  const enableBiometricsOnCurrent = async () => {
+    if (!wallet) return Alert.alert('Unlock first', 'Open your wallet, then enable biometrics.');
+    const tag = (currentWalletName || saveWalletName || 'Main').trim() || 'Main';
+    try {
+      setPasskeyBusy(true);
+      const enc = await persistNamedWallet(wallet, tag, null, { withBiometrics: true });
+      await storage.setItemAsync(SECURE_STORE_KEYS.wallet(tag), enc);
+      if (!savedWalletNames.includes(tag)) {
+        const updatedNames = [...savedWalletNames, tag];
+        setSavedWalletNames(updatedNames);
+        await storage.setItemAsync(SECURE_STORE_KEYS.walletNames, JSON.stringify(updatedNames));
+      }
+      setCurrentWalletName(tag);
+      Alert.alert('✅ Biometrics enabled', `Next login: Unlock with ${bioLabel} for “${tag}”`);
+    } catch (e: any) {
+      Alert.alert('Failed', e.message || 'Could not enable biometrics');
+    } finally {
+      setPasskeyBusy(false);
     }
   };
 
@@ -724,20 +938,80 @@ const Wallet: React.FC = () => {
     }
   };
 
-  const loadWallet = async (walletName: string) => {
-    const enc = await storage.getItemAsync(SECURE_STORE_KEYS.wallet(walletName));
-    if (!enc || !password) return setError('No wallet or wrong password');
+  const activateLoggedInWallet = (data: WalletData, name: string) => {
+    setWallet(data);
+    setCurrentWalletName(name);
+    setIsLoggedIn(true);
+    fetchBalanceAndNonce(data.address);
+    setPassword('');
+    setSelectedWalletToLogin('');
+    setShowWalletSelection(false);
+    setError(null);
+  };
+
+  const selectWalletForLogin = async (name: string) => {
+    setSelectedWalletToLogin(name);
+    setShowWalletSelection(true);
+    setError(null);
+    setPassword('');
+    try {
+      const enc = await storage.getItemAsync(SECURE_STORE_KEYS.wallet(name));
+      const info = inspectWalletBlob(enc);
+      setSelectedLoginBadge(authBadgeForBlob(enc));
+      setSelectedLoginHasPasskey(info.hasPasskey);
+      setSelectedLoginHasPassword(info.hasPassword);
+      setSelectedLoginRequire2fa(info.require2fa);
+    } catch {
+      setSelectedLoginBadge('Saved');
+      setSelectedLoginHasPasskey(false);
+      setSelectedLoginHasPassword(true);
+      setSelectedLoginRequire2fa(false);
+    }
+  };
+
+  const loadWallet = async (name: string) => {
+    const enc = await storage.getItemAsync(SECURE_STORE_KEYS.wallet(name));
+    if (!enc) return setError('Wallet not found');
+    const info = inspectWalletBlob(enc);
+    if (info.require2fa) {
+      return setError('2FA wallet: enter password, then tap Unlock with password + biometrics');
+    }
+    if (!password) return setError('Enter password');
     try {
       const data = decryptWallet(enc, password);
-      setWallet(data);
-      setCurrentWalletName(walletName);
-      setIsLoggedIn(true);
-      fetchBalanceAndNonce(data.address);
-      setPassword('');
-      setSelectedWalletToLogin('');
-      setShowWalletSelection(false);
+      activateLoggedInWallet(data, name);
     } catch (e: any) {
       setError('Wrong password: ' + e.message);
+    }
+  };
+
+  const loadWalletWithBiometrics = async (name: string, withPassword: boolean) => {
+    const enc = await storage.getItemAsync(SECURE_STORE_KEYS.wallet(name));
+    if (!enc) return setError('Wallet not found');
+    const info = inspectWalletBlob(enc);
+    if (!info.hasPasskey || !info.envelope?.passkey) {
+      return setError('This wallet has no biometric unlock — use password, or re-enable biometrics after unlock');
+    }
+    if (withPassword && !password) {
+      return setError('Enter password, then confirm with biometrics');
+    }
+    if (!withPassword && info.require2fa) {
+      return setError('This wallet requires password + biometrics. Enter password, then unlock with 2FA.');
+    }
+    try {
+      setPasskeyBusy(true);
+      setError(null);
+      let data: WalletData;
+      if (info.require2fa || withPassword) {
+        data = await unlockEnvelopeWith2fa(info.envelope!, password, decryptWallet);
+      } else {
+        data = await decryptWithBiometrics(info.envelope!.passkey!);
+      }
+      activateLoggedInWallet(data, name);
+    } catch (e: any) {
+      setError(e.message || 'Biometric unlock failed');
+    } finally {
+      setPasskeyBusy(false);
     }
   };
 
@@ -892,62 +1166,134 @@ const Wallet: React.FC = () => {
     }
   };
 
+  const hasSavedWallets = savedWalletNames.length > 0;
+  const accessTitle =
+    accessPath === 'hub'
+      ? hasSavedWallets
+        ? 'Welcome back'
+        : 'Get started'
+      : accessPath === 'login'
+        ? 'Unlock wallet'
+        : accessPath === 'create'
+          ? 'Create wallet'
+          : accessPath === 'have'
+            ? 'Restore wallet'
+            : accessPath === 'derive'
+              ? 'Seed phrase'
+              : accessPath === 'import'
+                ? 'Private key'
+                : accessPath === 'load'
+                  ? 'Wallet file'
+                  : 'Wallet';
+  const accessHint =
+    accessPath === 'hub'
+      ? hasSavedWallets
+        ? 'Unlock with biometrics or password, or start another path.'
+        : 'Create with biometrics (optional password / 2FA).'
+      : accessPath === 'login'
+        ? selectedLoginRequire2fa
+          ? `2FA: enter password, then confirm with ${bioLabel}.`
+          : selectedLoginHasPasskey
+            ? `Tap Unlock with ${bioLabel}, or use password if you set one.`
+            : 'Choose a saved wallet and enter its password.'
+        : accessPath === 'create'
+          ? 'Name the wallet first. Then unlock options, then write down your seed.'
+          : accessPath === 'have'
+            ? 'How do you want to restore access?'
+            : accessPath === 'derive'
+              ? 'Enter the 12 or 24 word phrase for this wallet.'
+              : accessPath === 'import'
+                ? 'Paste the 64-character private key.'
+                : accessPath === 'load'
+                  ? 'Open an encrypted warthog_wallet.txt file.'
+                  : '';
+  const showAccessBack = accessPath !== 'hub';
+  const accessBackTarget: AccessPath =
+    accessPath === 'derive' || accessPath === 'import' || accessPath === 'load' ? 'have' : 'hub';
+
   return (
     <View style={styles.container}>
       {!isLoggedIn ? (
-        <View style={styles.loginSection}>
-          <Text style={styles.label}>Choose Action</Text>
-          <View style={styles.buttonRow}>
-            {(['create', 'derive', 'import', 'login'] as const).map(act => (
+        <ScrollView style={styles.loginSection} contentContainerStyle={{ paddingBottom: 40 }}>
+          {showAccessBack ? (
+            <TouchableOpacity onPress={() => goAccessPath(accessBackTarget)} disabled={creatingWallet || passkeyBusy}>
+              <Text style={[styles.label, { color: defiColors.goldHover }]}>← Back</Text>
+            </TouchableOpacity>
+          ) : (
+            <Text style={[styles.label, { opacity: 0.5, fontSize: 11, textTransform: 'uppercase' }]}>
+              No wallet open
+            </Text>
+          )}
+          <Text style={[styles.label, { fontSize: 22, fontWeight: '700', color: theme.colors.textPrimary, marginBottom: 4 }]}>
+            {accessTitle}
+          </Text>
+          <Text style={[styles.label, { marginBottom: 16 }]}>{accessHint}</Text>
+
+          {/* ── Hub ── */}
+          {accessPath === 'hub' && (
+            <>
+              {hasSavedWallets && (
+                <TouchableOpacity
+                  style={[styles.bigButton, styles.bigButtonPrimary]}
+                  onPress={() => goAccessPath('login')}
+                >
+                  <Text style={styles.bigButtonPrimaryText}>Unlock saved wallet</Text>
+                  <Text style={[styles.label, { textAlign: 'center', marginTop: 4, marginBottom: 0 }]}>
+                    {savedWalletNames.length} on this device
+                    {biometricsSupported ? ` · ${bioLabel} ready` : ''}
+                  </Text>
+                </TouchableOpacity>
+              )}
               <TouchableOpacity
-                key={act}
-                style={[styles.actionButton, walletAction === act && styles.activeButton]}
-                onPress={() => setWalletAction(act)}
+                style={[styles.bigButton, !hasSavedWallets && styles.bigButtonPrimary]}
+                onPress={() => goAccessPath('create')}
               >
-                <Text style={[styles.actionButtonText, walletAction === act && styles.activeButtonText]}>
-                  {act.toUpperCase()}
+                <Text style={!hasSavedWallets ? styles.bigButtonPrimaryText : styles.bigButtonText}>
+                  Create new wallet
+                </Text>
+                <Text style={[styles.label, { textAlign: 'center', marginTop: 4, marginBottom: 0 }]}>
+                  Name → unlock options → seed
                 </Text>
               </TouchableOpacity>
-            ))}
-          </View>
-          {walletAction === 'login' && (
+              <TouchableOpacity style={styles.bigButton} onPress={() => goAccessPath('have')}>
+                <Text style={styles.bigButtonText}>
+                  {hasSavedWallets ? 'Other restore options' : 'I already have a wallet'}
+                </Text>
+                <Text style={[styles.label, { textAlign: 'center', marginTop: 4, marginBottom: 0 }]}>
+                  Seed, key, file, or QR
+                </Text>
+              </TouchableOpacity>
+            </>
+          )}
+
+          {/* ── Have ── */}
+          {accessPath === 'have' && (
             <>
-              {savedWalletNames.length > 0 && !showWalletSelection && !uploadedFileContent && (
-                <>
-                  <Text style={styles.label}>Saved Wallets:</Text>
-                  {savedWalletNames.map(name => (
-                    <TouchableOpacity
-                      key={name}
-                      style={styles.bigButton}
-                      onPress={() => {
-                        setSelectedWalletToLogin(name);
-                        setShowWalletSelection(true);
-                      }}
-                    >
-                      <Text style={styles.bigButtonText}>{name}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </>
+              {hasSavedWallets && (
+                <TouchableOpacity style={styles.bigButton} onPress={() => goAccessPath('login')}>
+                  <Text style={styles.bigButtonText}>Saved on this device</Text>
+                  <Text style={[styles.label, { textAlign: 'center', marginTop: 4, marginBottom: 0 }]}>
+                    {savedWalletNames.length} wallet{savedWalletNames.length === 1 ? '' : 's'}
+                  </Text>
+                </TouchableOpacity>
               )}
-              {showWalletSelection && selectedWalletToLogin && (
-                <>
-                  <Text style={styles.label}>Logging into: {selectedWalletToLogin}</Text>
-                  <StyledTextInput
-                    placeholder="Enter password to decrypt"
-                    secureTextEntry={!showPassword}
-                    value={password}
-                    onChangeText={setPassword}
-                  />
-                  <TouchableOpacity style={styles.bigButton} onPress={() => loadWallet(selectedWalletToLogin)}>
-                    <Text style={styles.bigButtonText}>Decrypt & Login</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.bigButton} onPress={() => { setShowWalletSelection(false); setSelectedWalletToLogin(''); setPassword(''); }}>
-                    <Text style={styles.bigButtonText}>Back to Wallet List</Text>
-                  </TouchableOpacity>
-                </>
-              )}
-              <TouchableOpacity style={[styles.bigButton, styles.bigButtonPrimary]} onPress={pickAndLoginFromFile}>
-                <Text style={styles.bigButtonPrimaryText}>Login from File</Text>
+              <TouchableOpacity style={styles.bigButton} onPress={() => goAccessPath('derive')}>
+                <Text style={styles.bigButtonText}>Seed phrase</Text>
+                <Text style={[styles.label, { textAlign: 'center', marginTop: 4, marginBottom: 0 }]}>
+                  12 or 24 words
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.bigButton} onPress={() => goAccessPath('import')}>
+                <Text style={styles.bigButtonText}>Private key</Text>
+                <Text style={[styles.label, { textAlign: 'center', marginTop: 4, marginBottom: 0 }]}>
+                  64-character hex
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.bigButton} onPress={() => goAccessPath('load')}>
+                <Text style={styles.bigButtonText}>Encrypted file</Text>
+                <Text style={[styles.label, { textAlign: 'center', marginTop: 4, marginBottom: 0 }]}>
+                  warthog_wallet.txt
+                </Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.bigButton}
@@ -956,27 +1302,11 @@ const Wallet: React.FC = () => {
                   setShowWalletQrScanner(true);
                 }}
               >
-                <Text style={styles.bigButtonText}>Scan Wallet QR (from wartbunker)</Text>
+                <Text style={styles.bigButtonText}>Scan wallet QR (from wartbunker)</Text>
               </TouchableOpacity>
-              {uploadedFileName && (
-                <Text style={styles.label}>Selected file: {uploadedFileName}</Text>
-              )}
-              {uploadedFileContent && (
-                <>
-                  <StyledTextInput
-                    placeholder="Enter password to decrypt file"
-                    secureTextEntry={!showPassword}
-                    value={password}
-                    onChangeText={setPassword}
-                  />
-                  <TouchableOpacity style={styles.bigButton} onPress={loginFromFile}>
-                    <Text style={styles.bigButtonText}>Decrypt & Login from File</Text>
-                  </TouchableOpacity>
-                </>
-              )}
               {scannedWalletPayload && (
                 <>
-                  <Text style={styles.label}>Wallet QR loaded — enter the export password from wartbunker</Text>
+                  <Text style={styles.label}>Wallet QR loaded — enter the export password</Text>
                   <StyledTextInput
                     placeholder="Export password"
                     secureTextEntry={!showPassword}
@@ -986,52 +1316,296 @@ const Wallet: React.FC = () => {
                   <TouchableOpacity style={styles.bigButton} onPress={loginFromWalletQr}>
                     <Text style={styles.bigButtonText}>Decrypt & Import Wallet</Text>
                   </TouchableOpacity>
+                </>
+              )}
+            </>
+          )}
+
+          {/* ── Login ── */}
+          {accessPath === 'login' && (
+            <>
+              {!showWalletSelection && (
+                <>
+                  <Text style={styles.label}>Wallet</Text>
+                  {savedWalletNames.map((name) => (
+                    <TouchableOpacity
+                      key={name}
+                      style={[
+                        styles.bigButton,
+                        selectedWalletToLogin === name && styles.bigButtonPrimary,
+                      ]}
+                      onPress={() => void selectWalletForLogin(name)}
+                    >
+                      <Text
+                        style={
+                          selectedWalletToLogin === name
+                            ? styles.bigButtonPrimaryText
+                            : styles.bigButtonText
+                        }
+                      >
+                        {name}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                  {savedWalletNames.length === 0 && (
+                    <Text style={styles.label}>No saved wallets on this device.</Text>
+                  )}
+                </>
+              )}
+              {showWalletSelection && selectedWalletToLogin && (
+                <>
+                  <Text style={styles.label}>Unlock: {selectedWalletToLogin}</Text>
+                  {!!selectedLoginBadge && (
+                    <Text style={[styles.label, { color: defiColors.goldHover }]}>
+                      {selectedLoginBadge}
+                    </Text>
+                  )}
+                  {selectedLoginRequire2fa ? (
+                    <>
+                      <Text style={styles.label}>
+                        2FA is on: password and {bioLabel.toLowerCase()}.
+                      </Text>
+                      <StyledTextInput
+                        placeholder="Wallet password"
+                        secureTextEntry={!showPassword}
+                        value={password}
+                        onChangeText={setPassword}
+                      />
+                      <TouchableOpacity
+                        style={[styles.bigButton, styles.bigButtonPrimary]}
+                        disabled={passkeyBusy || !password}
+                        onPress={() => void loadWalletWithBiometrics(selectedWalletToLogin, true)}
+                      >
+                        <Text style={styles.bigButtonPrimaryText}>
+                          {passkeyBusy
+                            ? 'Waiting…'
+                            : `Unlock with password + ${bioLabel}`}
+                        </Text>
+                      </TouchableOpacity>
+                    </>
+                  ) : (
+                    <>
+                      {selectedLoginHasPasskey && biometricsSupported && (
+                        <TouchableOpacity
+                          style={[styles.bigButton, styles.bigButtonPrimary]}
+                          disabled={passkeyBusy}
+                          onPress={() =>
+                            void loadWalletWithBiometrics(selectedWalletToLogin, false)
+                          }
+                        >
+                          <Text style={styles.bigButtonPrimaryText}>
+                            {passkeyBusy ? 'Waiting…' : `Unlock with ${bioLabel}`}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
+                      {selectedLoginHasPassword && (
+                        <>
+                          {selectedLoginHasPasskey && (
+                            <Text style={styles.label}>Or use password</Text>
+                          )}
+                          <StyledTextInput
+                            placeholder="Wallet password"
+                            secureTextEntry={!showPassword}
+                            value={password}
+                            onChangeText={setPassword}
+                          />
+                          <TouchableOpacity
+                            style={styles.bigButton}
+                            disabled={passkeyBusy || !password}
+                            onPress={() => void loadWallet(selectedWalletToLogin)}
+                          >
+                            <Text style={styles.bigButtonText}>Unlock with password</Text>
+                          </TouchableOpacity>
+                        </>
+                      )}
+                    </>
+                  )}
                   <TouchableOpacity
                     style={styles.bigButton}
                     onPress={() => {
-                      setScannedWalletPayload(null);
+                      setShowWalletSelection(false);
+                      setSelectedWalletToLogin('');
                       setPassword('');
+                      setError(null);
                     }}
                   >
-                    <Text style={styles.bigButtonText}>Clear Scanned QR</Text>
+                    <Text style={styles.bigButtonText}>← Back to wallet list</Text>
                   </TouchableOpacity>
                 </>
               )}
             </>
           )}
-          {(walletAction === 'create' || walletAction === 'derive' || walletAction === 'import') && (
+
+          {/* ── Create: name first ── */}
+          {accessPath === 'create' && (
             <>
+              <Text style={styles.label}>
+                Step 1 of 3 — pick a name. Next: unlock options, then write down your seed.
+              </Text>
+              <StyledTextInput
+                placeholder="Wallet name (e.g. main)"
+                value={walletName}
+                onChangeText={setWalletName}
+              />
+              <Text style={styles.label}>Word count: {wordCount}</Text>
+              <View style={styles.buttonRow}>
+                {(['12', '24'] as const).map((w) => (
+                  <TouchableOpacity
+                    key={w}
+                    style={[styles.actionButton, wordCount === w && styles.activeButton]}
+                    onPress={() => setWordCount(w)}
+                  >
+                    <Text
+                      style={[
+                        styles.actionButtonText,
+                        wordCount === w && styles.activeButtonText,
+                      ]}
+                    >
+                      {w}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <Text style={styles.label}>Path: {pathType}</Text>
+              <View style={styles.buttonRow}>
+                {(['hardened', 'normal'] as const).map((p) => (
+                  <TouchableOpacity
+                    key={p}
+                    style={[styles.actionButton, pathType === p && styles.activeButton]}
+                    onPress={() => setPathType(p)}
+                  >
+                    <Text
+                      style={[
+                        styles.actionButtonText,
+                        pathType === p && styles.activeButtonText,
+                      ]}
+                    >
+                      {p === 'hardened' ? 'BIP44' : 'Legacy'}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
               {creatingWallet ? (
                 <View style={styles.loadingContainer}>
                   <ActivityIndicator size="large" color={defiColors.goldHover} />
-                  <Text style={styles.loadingText}>Creating wallet...</Text>
+                  <Text style={styles.loadingText}>Generating…</Text>
                 </View>
               ) : (
-                <TouchableOpacity style={styles.bigButton} onPress={handleWalletAction}>
-                  <Text style={styles.bigButtonText}>
-                    {walletAction === 'create' ? 'Create New Wallet' : walletAction === 'derive' ? 'Derive from Seed Phrase' : 'Import Private Key'}
-                  </Text>
+                <TouchableOpacity
+                  style={[styles.bigButton, styles.bigButtonPrimary]}
+                  onPress={() => void handleWalletAction()}
+                  disabled={!walletName.trim()}
+                >
+                  <Text style={styles.bigButtonPrimaryText}>Continue — unlock options</Text>
                 </TouchableOpacity>
               )}
             </>
           )}
-          {walletAction === 'derive' && (
-            <StyledTextInput
-              placeholder="Enter 12 or 24 word seed phrase"
-              value={mnemonic}
-              onChangeText={setMnemonic}
-              multiline
-              numberOfLines={4}
-            />
+
+          {/* ── Derive ── */}
+          {accessPath === 'derive' && (
+            <>
+              <StyledTextInput
+                placeholder="12 or 24 word seed phrase"
+                value={mnemonic}
+                onChangeText={setMnemonic}
+                multiline
+                numberOfLines={4}
+              />
+              <StyledTextInput
+                placeholder="Wallet name (optional)"
+                value={walletName}
+                onChangeText={setWalletName}
+              />
+              <View style={styles.buttonRow}>
+                {(['12', '24'] as const).map((w) => (
+                  <TouchableOpacity
+                    key={w}
+                    style={[styles.actionButton, wordCount === w && styles.activeButton]}
+                    onPress={() => setWordCount(w)}
+                  >
+                    <Text
+                      style={[
+                        styles.actionButtonText,
+                        wordCount === w && styles.activeButtonText,
+                      ]}
+                    >
+                      {w}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              {creatingWallet ? (
+                <ActivityIndicator size="large" color={defiColors.goldHover} />
+              ) : (
+                <TouchableOpacity
+                  style={[styles.bigButton, styles.bigButtonPrimary]}
+                  onPress={() => void handleWalletAction()}
+                >
+                  <Text style={styles.bigButtonPrimaryText}>Recover wallet</Text>
+                </TouchableOpacity>
+              )}
+            </>
           )}
-          {walletAction === 'import' && (
-            <StyledTextInput
-              placeholder="Enter 64-char private key"
-              value={privateKeyInput}
-              onChangeText={setPrivateKeyInput}
-            />
+
+          {/* ── Import ── */}
+          {accessPath === 'import' && (
+            <>
+              <StyledTextInput
+                placeholder="64-character hex private key"
+                value={privateKeyInput}
+                onChangeText={setPrivateKeyInput}
+              />
+              <StyledTextInput
+                placeholder="Wallet name (optional)"
+                value={walletName}
+                onChangeText={setWalletName}
+              />
+              {creatingWallet ? (
+                <ActivityIndicator size="large" color={defiColors.goldHover} />
+              ) : (
+                <TouchableOpacity
+                  style={[styles.bigButton, styles.bigButtonPrimary]}
+                  onPress={() => void handleWalletAction()}
+                >
+                  <Text style={styles.bigButtonPrimaryText}>Import wallet</Text>
+                </TouchableOpacity>
+              )}
+            </>
           )}
-        </View>
+
+          {/* ── Load file ── */}
+          {accessPath === 'load' && (
+            <>
+              <TouchableOpacity
+                style={[styles.bigButton, styles.bigButtonPrimary]}
+                onPress={() => void pickAndLoginFromFile()}
+              >
+                <Text style={styles.bigButtonPrimaryText}>Browse for wallet file</Text>
+              </TouchableOpacity>
+              {uploadedFileName && (
+                <Text style={[styles.label, { color: defiColors.goldHover }]}>
+                  Selected: {uploadedFileName}
+                </Text>
+              )}
+              {uploadedFileContent && (
+                <>
+                  <StyledTextInput
+                    placeholder="File password"
+                    secureTextEntry={!showPassword}
+                    value={password}
+                    onChangeText={setPassword}
+                  />
+                  <TouchableOpacity style={styles.bigButton} onPress={() => void loginFromFile()}>
+                    <Text style={styles.bigButtonText}>Open file</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+            </>
+          )}
+
+          {error ? <Text style={styles.error}>{error}</Text> : null}
+        </ScrollView>
       ) : wallet ? (
         <>
           <DefiPageHeader
@@ -1115,40 +1689,184 @@ const Wallet: React.FC = () => {
         <View style={modalOverlayStyle}>
           <ScrollView style={modalContentStyle} contentContainerStyle={{ paddingBottom: 50 }}>
             <View style={defiStyles.modalAccent} />
-            <Text style={modalTitleStyle}>Wallet Ready!</Text>
-            {walletData?.mnemonic && (
+            <Text style={modalTitleStyle}>
+              {secureStep === 'save' ? 'Name & unlock options' : 'Write down your seed phrase'}
+            </Text>
+            <Text style={styles.label}>
+              {secureStep === 'save'
+                ? 'Step 2 of 3 · set name, biometrics, and optional password first'
+                : 'Step 3 of 3 · write the seed offline, then confirm before closing'}
+            </Text>
+
+            {secureStep === 'save' && (
               <>
-                <Text style={styles.label}>Mnemonic Phrase</Text>
-                <Text style={styles.seed}>{walletData.mnemonic}</Text>
+                <Text style={styles.label}>
+                  Choose how you&apos;ll unlock next time. Biometrics are registered once after you write down your seed.
+                </Text>
+                <Text style={styles.label}>Wallet Name</Text>
+                <StyledTextInput placeholder="e.g. main" value={walletName} onChangeText={setWalletName} />
+                {biometricsSupported && (
+                  <>
+                    <TouchableOpacity
+                      style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 8 }}
+                      onPress={() => {
+                        setEnableBioOnCreate(!enableBioOnCreate);
+                        if (enableBioOnCreate) setRequire2faOnCreate(false);
+                      }}
+                    >
+                      <View style={{ width: 20, height: 20, borderWidth: 1, borderColor: defiColors.goldHover, marginRight: 10, backgroundColor: enableBioOnCreate ? defiColors.goldHover : 'transparent' }} />
+                      <Text style={{ color: theme.colors.textSecondary, fontSize: 14 }}>Enable {bioLabel} unlock</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}
+                      onPress={() => {
+                        setRequire2faOnCreate(!require2faOnCreate);
+                        if (!require2faOnCreate) setEnableBioOnCreate(true);
+                      }}
+                    >
+                      <View style={{ width: 20, height: 20, borderWidth: 1, borderColor: defiColors.goldHover, marginRight: 10, backgroundColor: require2faOnCreate ? defiColors.goldHover : 'transparent' }} />
+                      <Text style={{ color: theme.colors.textSecondary, fontSize: 14 }}>
+                        Optional 2FA: require password + {bioLabel}
+                      </Text>
+                    </TouchableOpacity>
+                  </>
+                )}
+                <Text style={styles.label}>
+                  {require2faOnCreate
+                    ? 'Password (required for 2FA)'
+                    : enableBioOnCreate && biometricsSupported
+                      ? 'Password (optional if biometrics is on)'
+                      : 'Password'}
+                </Text>
+                <StyledTextInput placeholder="Password" secureTextEntry={!showPassword} value={password} onChangeText={setPassword} />
+                <Text style={styles.label}>
+                  Strength:{' '}
+                  <Text
+                    style={{
+                      color:
+                        getPasswordStrength(password).level === 1
+                          ? 'red'
+                          : getPasswordStrength(password).level === 2
+                            ? 'orange'
+                            : getPasswordStrength(password).level === 3
+                              ? 'blue'
+                              : 'green',
+                    }}
+                  >
+                    {getPasswordStrength(password).label}
+                  </Text>
+                </Text>
+                <StyledTextInput
+                  placeholder="Confirm password"
+                  secureTextEntry={!showConfirmPassword}
+                  value={confirmPassword}
+                  onChangeText={setConfirmPassword}
+                />
+                <TouchableOpacity
+                  style={[styles.bigButton, styles.bigButtonPrimary]}
+                  onPress={continueToSeedBackup}
+                >
+                  <Text style={styles.bigButtonPrimaryText}>Continue — write down seed phrase</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => {
+                    setShowModal(false);
+                    setModalError(null);
+                    setSecureStep('save');
+                  }}
+                >
+                  <Text style={modalCloseStyle}>Cancel</Text>
+                </TouchableOpacity>
               </>
             )}
-            <Text style={styles.label}>Private Key</Text>
-            <TouchableOpacity onPress={() => copyToClipboard(walletData!.privateKey, 'Private Key')}>
-              <Text style={styles.key}>{walletData?.privateKey}</Text>
-            </TouchableOpacity>
-            <Text style={styles.label}>Wallet Name</Text>
-            <StyledTextInput placeholder="Enter a name for this wallet" value={walletName} onChangeText={setWalletName} />
-            <Text style={styles.label}>Password must be at least 8 characters with uppercase, lowercase, number, and special character.</Text>
-            <StyledTextInput placeholder="Password" secureTextEntry={!showPassword} value={password} onChangeText={setPassword} />
-            <Text style={styles.label}>Strength: <Text style={{ color: getPasswordStrength(password).level === 1 ? 'red' : getPasswordStrength(password).level === 2 ? 'orange' : getPasswordStrength(password).level === 3 ? 'blue' : 'green' }}>{getPasswordStrength(password).label}</Text></Text>
-            <StyledTextInput placeholder="Confirm Password" secureTextEntry={!showConfirmPassword} value={confirmPassword} onChangeText={setConfirmPassword} />
-            <TouchableOpacity
-              style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 10 }}
-              onPress={() => setSaveWalletConsent(!saveWalletConsent)}
-            >
-              <View style={{ width: 20, height: 20, borderWidth: 1, borderColor: defiColors.goldHover, marginRight: 10, backgroundColor: saveWalletConsent ? defiColors.goldHover : 'transparent' }} />
-              <Text style={{ color: theme.colors.textSecondary, fontSize: 14 }}>I consent to save this wallet securely on this device</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.bigButton} onPress={saveWallet}>
-              <Text style={styles.bigButtonText}>{Platform.OS === 'web' ? 'Save (not secure in this web demo)' : 'Save Securely (Device)'}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.bigButton} onPress={downloadWallet}>
-              <Text style={styles.bigButtonText}>Download Encrypted File</Text>
-            </TouchableOpacity>
+
+            {secureStep === 'backup' && (
+              <>
+                <Text style={[styles.label, { color: '#fbbf24' }]}>
+                  Critical: Write your seed phrase offline and store it safely. Anyone with these words can take your funds.
+                </Text>
+                {walletName ? (
+                  <Text style={styles.label}>
+                    Wallet name: <Text style={{ color: defiColors.goldHover }}>{walletName}</Text>
+                  </Text>
+                ) : null}
+                {walletData?.mnemonic ? (
+                  <>
+                    <Text style={styles.label}>SEED PHRASE</Text>
+                    <Text style={styles.seed}>{walletData.mnemonic}</Text>
+                  </>
+                ) : null}
+                <Text style={styles.label}>PRIVATE KEY</Text>
+                <TouchableOpacity onPress={() => copyToClipboard(walletData!.privateKey, 'Private Key')}>
+                  <Text style={styles.key}>{walletData?.privateKey}</Text>
+                </TouchableOpacity>
+                {walletData?.address ? (
+                  <>
+                    <Text style={styles.label}>ADDRESS</Text>
+                    <Text style={styles.key}>{walletData.address}</Text>
+                  </>
+                ) : null}
+                <TouchableOpacity
+                  style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 10 }}
+                  onPress={() => {
+                    const next = !(consentToClose || saveWalletConsent);
+                    setConsentToClose(next);
+                    setSaveWalletConsent(next);
+                  }}
+                >
+                  <View
+                    style={{
+                      width: 20,
+                      height: 20,
+                      borderWidth: 1,
+                      borderColor: defiColors.goldHover,
+                      marginRight: 10,
+                      backgroundColor: consentToClose || saveWalletConsent ? defiColors.goldHover : 'transparent',
+                    }}
+                  />
+                  <Text style={{ color: theme.colors.textSecondary, fontSize: 14 }}>
+                    I confirm I have written down my seed phrase before closing
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.bigButton, styles.bigButtonPrimary]}
+                  onPress={() => void saveWallet()}
+                  disabled={passkeyBusy || !(consentToClose || saveWalletConsent)}
+                >
+                  <Text style={styles.bigButtonPrimaryText}>
+                    {passkeyBusy
+                      ? 'Waiting for biometrics…'
+                      : enableBioOnCreate && biometricsSupported
+                        ? `Save & open (register ${bioLabel} once)`
+                        : 'Save & open wallet'}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.bigButton}
+                  onPress={openWithoutSaving}
+                  disabled={!(consentToClose || saveWalletConsent) || passkeyBusy}
+                >
+                  <Text style={styles.bigButtonText}>Open without saving</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.bigButton}
+                  onPress={downloadWallet}
+                  disabled={passkeyBusy}
+                >
+                  <Text style={styles.bigButtonText}>Download encrypted file</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => {
+                    setSecureStep('save');
+                    setModalError(null);
+                  }}
+                >
+                  <Text style={modalCloseStyle}>← Back to unlock options</Text>
+                </TouchableOpacity>
+              </>
+            )}
+
             {modalError && <Text style={styles.error}>{modalError}</Text>}
-            <TouchableOpacity onPress={() => { setShowModal(false); setModalError(null); setWalletName(''); setPassword(''); setConfirmPassword(''); }}>
-              <Text style={modalCloseStyle}>Close</Text>
-            </TouchableOpacity>
           </ScrollView>
         </View>
       </Modal>
@@ -1160,13 +1878,59 @@ const Wallet: React.FC = () => {
             <Text style={modalTitleStyle}>Save Current Wallet</Text>
             <Text style={styles.label}>Wallet Name</Text>
             <StyledTextInput placeholder="Enter a name for this wallet" value={saveWalletName} onChangeText={setSaveWalletName} />
-            <Text style={styles.label}>Password must be at least 8 characters with uppercase, lowercase, number, and special character.</Text>
+            <Text style={styles.label}>
+              {enableBioOnSave && biometricsSupported
+                ? 'Password optional if biometrics is on (required for 2FA).'
+                : 'Password must be at least 8 characters with uppercase, lowercase, number, and special character.'}
+            </Text>
             <StyledTextInput placeholder="Password" secureTextEntry value={savePassword} onChangeText={setSavePassword} />
             <Text style={styles.label}>Strength: <Text style={{ color: getPasswordStrength(savePassword).level === 1 ? 'red' : getPasswordStrength(savePassword).level === 2 ? 'orange' : getPasswordStrength(savePassword).level === 3 ? 'blue' : 'green' }}>{getPasswordStrength(savePassword).label}</Text></Text>
             <StyledTextInput placeholder="Confirm Password" secureTextEntry value={saveConfirmPassword} onChangeText={setSaveConfirmPassword} />
-            <TouchableOpacity style={styles.bigButton} onPress={saveCurrentWallet}>
-              <Text style={styles.bigButtonText}>{Platform.OS === 'web' ? 'Save (not secure in this web demo)' : 'Save Securely (Device)'}</Text>
+            {biometricsSupported && (
+              <>
+                <TouchableOpacity
+                  style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 8 }}
+                  onPress={() => {
+                    setEnableBioOnSave(!enableBioOnSave);
+                    if (enableBioOnSave) setRequire2faOnSave(false);
+                  }}
+                >
+                  <View style={{ width: 20, height: 20, borderWidth: 1, borderColor: defiColors.goldHover, marginRight: 10, backgroundColor: enableBioOnSave ? defiColors.goldHover : 'transparent' }} />
+                  <Text style={{ color: theme.colors.textSecondary, fontSize: 14 }}>Enable {bioLabel} unlock</Text>
+                </TouchableOpacity>
+                {enableBioOnSave && (
+                  <TouchableOpacity
+                    style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}
+                    onPress={() => setRequire2faOnSave(!require2faOnSave)}
+                  >
+                    <View style={{ width: 20, height: 20, borderWidth: 1, borderColor: defiColors.goldHover, marginRight: 10, backgroundColor: require2faOnSave ? defiColors.goldHover : 'transparent' }} />
+                    <Text style={{ color: theme.colors.textSecondary, fontSize: 14 }}>2FA: require password + {bioLabel}</Text>
+                  </TouchableOpacity>
+                )}
+              </>
+            )}
+            <TouchableOpacity style={styles.bigButton} onPress={() => void saveCurrentWallet()} disabled={passkeyBusy}>
+              <Text style={styles.bigButtonText}>
+                {passkeyBusy
+                  ? 'Waiting for biometrics…'
+                  : enableBioOnSave && biometricsSupported
+                    ? `Save & register ${bioLabel}`
+                    : Platform.OS === 'web'
+                      ? 'Save (not secure in this web demo)'
+                      : 'Save Securely (Device)'}
+              </Text>
             </TouchableOpacity>
+            {biometricsSupported && (
+              <TouchableOpacity
+                style={styles.bigButton}
+                disabled={passkeyBusy}
+                onPress={() => void enableBiometricsOnCurrent()}
+              >
+                <Text style={styles.bigButtonText}>
+                  {passkeyBusy ? 'Waiting…' : `Enable ${bioLabel} only (keep existing password if any)`}
+                </Text>
+              </TouchableOpacity>
+            )}
             {modalError && <Text style={styles.error}>{modalError}</Text>}
             <TouchableOpacity onPress={() => { setShowSaveModal(false); setModalError(null); setSaveWalletName(''); setSavePassword(''); setSaveConfirmPassword(''); setLogoutAfterSave(false); }}>
               <Text style={modalCloseStyle}>Close</Text>
@@ -1413,6 +2177,7 @@ const Wallet: React.FC = () => {
                       setShowWalletOptionsModal(false);
                       handleLogout();
                       setWalletAction('login');
+                      setAccessPath('hub');
                     }}
                   >
                     <Text style={styles.bottomButtonText}>Switch Wallet</Text>
@@ -1494,6 +2259,10 @@ const Wallet: React.FC = () => {
             poolPrefill={defi.dexPoolPrefill}
             onPrefillConsumed={() => defi.setDexPoolPrefill(null)}
             onSuccess={afterSpendSuccess}
+            assetBalances={defi.orderedAssets}
+            wartAvailable={balanceAvailable}
+            wartLocked={balanceLocked}
+            wartTotal={balance}
           />
         </>
       )}
