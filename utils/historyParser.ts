@@ -390,11 +390,29 @@ export async function fetchBlockTimestamps(
   return timestampMap;
 }
 
+export type HistoryFetchResult = {
+  items: NormalizedHistoryTx[];
+  fromId: number | string | null;
+  hasMore: boolean;
+  source: 'indexer' | 'node';
+  nextPage?: number;
+};
+
+function normalizeFromId(raw: unknown): number | string | null {
+  if (raw == null) return null;
+  const n = typeof raw === 'number' ? raw : Number(raw);
+  if (Number.isFinite(n) && n > 0) return n;
+  // Keep non-numeric cursors if node ever returns them
+  if (typeof raw === 'string' && raw.trim() && raw !== '0') return raw.trim();
+  return null;
+}
+
+/** Node RPC history page (no type filter). */
 export async function fetchAccountHistory(
   node: string,
   address: string,
   beforeTxIndex: number | string = 4294967295
-): Promise<{ items: NormalizedHistoryTx[]; fromId: number | null; hasMore: boolean }> {
+): Promise<HistoryFetchResult> {
   const api = createWarthogApi(node);
   const histRes = await api.getAccountHistory(address, beforeTxIndex);
   if (!histRes.success) {
@@ -410,10 +428,50 @@ export async function fetchAccountHistory(
   const items = parseHistoryBlocks(rawData, timestampMap, address);
   items.sort((a, b) => (b.height || 0) - (a.height || 0));
 
-  const fromId = rawData.fromId ?? null;
+  const fromId = normalizeFromId(rawData.fromId);
   return {
     items,
-    fromId: fromId && fromId > 0 ? fromId : null,
-    hasMore: items.length > 0 && !!fromId && fromId > 0,
+    fromId,
+    hasMore: items.length > 0 && fromId != null,
+    source: 'node',
   };
+}
+
+/**
+ * Prefer explorer indexer (server-side type filters like WartBunker).
+ * Falls back to node RPC when indexer is unavailable.
+ */
+export async function fetchAccountHistoryPreferIndexer(
+  node: string,
+  address: string,
+  options: {
+    filter?: string;
+    page?: number;
+    beforeTxIndex?: number | string;
+  } = {},
+): Promise<HistoryFetchResult> {
+  const filter = options.filter || 'all';
+  const page = options.page ?? 1;
+
+  try {
+    const { fetchIndexerHistoryPage } = await import('./warthogIndexer');
+    const indexed = await fetchIndexerHistoryPage(node, address, {
+      page,
+      filter,
+    });
+    if (indexed) {
+      return {
+        items: indexed.items,
+        hasMore: indexed.hasMore,
+        nextPage: indexed.nextPage,
+        fromId: null,
+        source: 'indexer',
+      };
+    }
+  } catch (err) {
+    console.warn('[history] indexer path failed, using node', err);
+  }
+
+  // Node path ignores type filter — caller must client-filter / hunt
+  return fetchAccountHistory(node, address, options.beforeTxIndex ?? 4294967295);
 }

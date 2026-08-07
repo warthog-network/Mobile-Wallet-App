@@ -17,7 +17,11 @@ import {
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { useAddressBook } from './components/AddressBook/AddressBookModal';
-import { fetchAccountHistory, type NormalizedHistoryTx } from './utils/historyParser';
+import {
+  fetchAccountHistory,
+  fetchAccountHistoryPreferIndexer,
+  type NormalizedHistoryTx,
+} from './utils/historyParser';
 import {
   DEFI_HISTORY_FILTERS,
   MAINNET_HISTORY_FILTERS,
@@ -91,6 +95,9 @@ const TransactionHistory: React.FC<Props> = ({
   const [hasMore, setHasMore] = useState(false);
   const [fromId, setFromId] = useState<number | string | null>(null);
   const [pagesLoaded, setPagesLoaded] = useState(0);
+  /** indexer = server type filters; node = RPC + client hunt */
+  const [historySource, setHistorySource] = useState<'indexer' | 'node' | null>(null);
+  const [indexerPage, setIndexerPage] = useState(1);
   const requestId = useRef(0);
   const huntGen = useRef(0);
   /** Live snapshots for async pagination (avoid stale closures mid-hunt). */
@@ -98,6 +105,10 @@ const TransactionHistory: React.FC<Props> = ({
   const fromIdRef = useRef<number | string | null>(null);
   const hasMoreRef = useRef(false);
   const pagesLoadedRef = useRef(0);
+  const historySourceRef = useRef<'indexer' | 'node' | null>(null);
+  const indexerPageRef = useRef(1);
+  /** Skip re-fetch on first historyFilter effect (address load owns it). */
+  const skipFilterReloadRef = useRef(true);
   const isDefi = isDefiNode(node);
   const filters = isDefi ? DEFI_HISTORY_FILTERS : MAINNET_HISTORY_FILTERS;
 
@@ -113,6 +124,12 @@ const TransactionHistory: React.FC<Props> = ({
   useEffect(() => {
     pagesLoadedRef.current = pagesLoaded;
   }, [pagesLoaded]);
+  useEffect(() => {
+    historySourceRef.current = historySource;
+  }, [historySource]);
+  useEffect(() => {
+    indexerPageRef.current = indexerPage;
+  }, [indexerPage]);
 
   const { addContact, getContactByAddress } = useAddressBook();
 
@@ -180,10 +197,14 @@ const TransactionHistory: React.FC<Props> = ({
     );
   };
 
+  /**
+   * Indexer already applied group=/direction= — trust results.
+   * Node path: client-filter (and hunt older pages).
+   */
   const filteredHistory = useMemo(() => {
-    if (historyFilter === 'all') return history;
+    if (historyFilter === 'all' || historySource === 'indexer') return history;
     return history.filter((tx) => matchesHistoryFilter(tx, historyFilter, address));
-  }, [history, historyFilter, address]);
+  }, [history, historyFilter, address, historySource]);
 
   const applyFullList = useCallback((items: NormalizedHistoryTx[]) => {
     setHistory(items);
@@ -191,61 +212,88 @@ const TransactionHistory: React.FC<Props> = ({
     setBlockCounts(updateRewardCounts(items));
   }, []);
 
-  /** Initial load or full refresh (first page from tip). */
-  const fetchHistory = useCallback(async (options?: { syncWallet?: boolean }) => {
-    if (!address) return;
+  /**
+   * Load history for current filter.
+   * Prefer explorer indexer (WartBunker-style server type filters).
+   */
+  const fetchHistory = useCallback(
+    async (options?: { syncWallet?: boolean; filter?: HistoryFilterId }) => {
+      if (!address) return;
 
-    const id = ++requestId.current;
-    huntGen.current += 1;
-    setLoading(true);
-    setHunting(false);
-    setError(null);
-    setVisibleCount(FILTER_PAGE_SIZE);
+      const filter = options?.filter ?? historyFilter;
+      const id = ++requestId.current;
+      huntGen.current += 1;
+      setLoading(true);
+      setHunting(false);
+      setError(null);
+      setVisibleCount(FILTER_PAGE_SIZE);
 
-    try {
-      const result = await fetchAccountHistory(node, address);
-      if (id !== requestId.current) return;
+      try {
+        const result = await fetchAccountHistoryPreferIndexer(node, address, {
+          filter,
+          page: 1,
+        });
+        if (id !== requestId.current) return;
 
-      applyFullList(result.items);
-      historyRef.current = result.items;
-      fromIdRef.current = result.fromId;
-      hasMoreRef.current = result.hasMore;
-      pagesLoadedRef.current = 1;
-      setFromId(result.fromId);
-      setHasMore(result.hasMore);
-      setPagesLoaded(1);
+        applyFullList(result.items);
+        historyRef.current = result.items;
+        historySourceRef.current = result.source;
+        setHistorySource(result.source);
 
-      if (options?.syncWallet && onRefresh) {
-        await onRefresh();
+        if (result.source === 'indexer') {
+          fromIdRef.current = null;
+          hasMoreRef.current = result.hasMore;
+          pagesLoadedRef.current = 1;
+          indexerPageRef.current = result.nextPage ?? 2;
+          setFromId(null);
+          setHasMore(result.hasMore);
+          setPagesLoaded(1);
+          setIndexerPage(result.nextPage ?? 2);
+        } else {
+          fromIdRef.current = result.fromId;
+          hasMoreRef.current = result.hasMore;
+          pagesLoadedRef.current = 1;
+          indexerPageRef.current = 1;
+          setFromId(result.fromId);
+          setHasMore(result.hasMore);
+          setPagesLoaded(1);
+          setIndexerPage(1);
+        }
+
+        if (options?.syncWallet && onRefresh) {
+          await onRefresh();
+        }
+      } catch (err: any) {
+        if (id !== requestId.current) return;
+        const message = err.message || 'Node returned error – try backup node';
+        setError(message);
+        console.error('History fetch error:', err);
+        applyFullList([]);
+        historyRef.current = [];
+        fromIdRef.current = null;
+        hasMoreRef.current = false;
+        pagesLoadedRef.current = 0;
+        historySourceRef.current = null;
+        setFromId(null);
+        setHasMore(false);
+        setPagesLoaded(0);
+        setHistorySource(null);
+      } finally {
+        if (id === requestId.current) {
+          setLoading(false);
+        }
       }
-    } catch (err: any) {
-      if (id !== requestId.current) return;
-      const message = err.message || 'Node returned error – try backup node';
-      setError(message);
-      console.error('History fetch error:', err);
-      applyFullList([]);
-      historyRef.current = [];
-      fromIdRef.current = null;
-      hasMoreRef.current = false;
-      pagesLoadedRef.current = 0;
-      setFromId(null);
-      setHasMore(false);
-      setPagesLoaded(0);
-    } finally {
-      if (id === requestId.current) {
-        setLoading(false);
-      }
-    }
-  }, [address, node, applyFullList, onRefresh]);
+    },
+    [address, node, historyFilter, applyFullList, onRefresh],
+  );
 
   /**
-   * Append older pages (node cursor = fromId).
-   * Used for Show More and filter hunt when matches sit under rewards.
+   * Append older pages — indexer page++ or node cursor.
+   * Node path: used for Show More and filter hunt when matches sit under rewards.
    */
   const loadOlderPages = useCallback(
     async (opts: {
       maxPages: number;
-      /** Stop early once this many filter matches exist (after merge). */
       untilMatchCount?: number;
       filter?: HistoryFilterId;
     }): Promise<{
@@ -253,13 +301,54 @@ const TransactionHistory: React.FC<Props> = ({
       hasMore: boolean;
       fromId: number | string | null;
       pagesFetched: number;
+      nextIndexerPage?: number;
     }> => {
       let more = hasMoreRef.current;
       let pages = 0;
       let acc = historyRef.current;
       let nextFrom: number | string | null = fromIdRef.current;
+      let nextIdxPage = indexerPageRef.current;
+      const source = historySourceRef.current;
+      const filter = opts.filter || 'all';
 
-      // Nothing left to page
+      // Indexer: server already filtered — just page forward
+      if (source === 'indexer') {
+        while (pages < opts.maxPages && more) {
+          const result = await fetchAccountHistoryPreferIndexer(node, address, {
+            filter,
+            page: nextIdxPage,
+          });
+          if (result.source !== 'indexer') {
+            // Indexer died mid-session — stop; user can refresh
+            more = false;
+            break;
+          }
+          pages += 1;
+          const beforeLen = acc.length;
+          acc = mergeHistory(acc, result.items);
+          more = result.hasMore;
+          nextIdxPage = result.nextPage ?? nextIdxPage + 1;
+          if (result.items.length === 0 || acc.length === beforeLen) {
+            more = false;
+            break;
+          }
+          if (
+            opts.untilMatchCount != null &&
+            acc.length >= opts.untilMatchCount
+          ) {
+            break;
+          }
+        }
+        return {
+          items: acc,
+          hasMore: more,
+          fromId: null,
+          pagesFetched: pages,
+          nextIndexerPage: nextIdxPage,
+        };
+      }
+
+      // Node: no type filter — page and client-filter
       if (acc.length > 0 && (!more || nextFrom == null)) {
         return { items: acc, hasMore: false, fromId: nextFrom, pagesFetched: 0 };
       }
@@ -268,7 +357,6 @@ const TransactionHistory: React.FC<Props> = ({
         const before: number | string =
           acc.length === 0 || nextFrom == null ? 4294967295 : nextFrom;
 
-        // If we already have items, require a real cursor for the next page
         if (acc.length > 0 && nextFrom == null) {
           more = false;
           break;
@@ -281,9 +369,9 @@ const TransactionHistory: React.FC<Props> = ({
         nextFrom = result.fromId;
         more = Boolean(result.hasMore && result.fromId);
 
-        if (opts.untilMatchCount != null && opts.filter && opts.filter !== 'all') {
+        if (opts.untilMatchCount != null && filter !== 'all') {
           const matches = acc.filter((tx) =>
-            matchesHistoryFilter(tx, opts.filter!, address),
+            matchesHistoryFilter(tx, filter, address),
           ).length;
           if (matches >= opts.untilMatchCount) break;
         }
@@ -292,7 +380,6 @@ const TransactionHistory: React.FC<Props> = ({
           more = false;
           break;
         }
-        // No progress — stop
         if (result.items.length === 0 || acc.length === beforeLen) {
           more = false;
           break;
@@ -304,24 +391,35 @@ const TransactionHistory: React.FC<Props> = ({
     [address, node],
   );
 
-  // Address/node change
+  // Address/node change — full reload on All
   useEffect(() => {
+    skipFilterReloadRef.current = true;
     setHistoryFilter('all');
-    if (address) void fetchHistory();
+    if (address) void fetchHistory({ filter: 'all' });
   }, [address, node]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Reset page window when filter changes
+  /**
+   * Filter change: re-query indexer with group=… (WartBunker behavior).
+   * Node fallback still client-hunts after load.
+   */
   useEffect(() => {
     setVisibleCount(FILTER_PAGE_SIZE);
+    if (!address) return;
+    if (skipFilterReloadRef.current) {
+      skipFilterReloadRef.current = false;
+      return;
+    }
+    void fetchHistory({ filter: historyFilter });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [historyFilter]);
 
   /**
-   * Filter hunt (wartbunker client scan): keep loading older history until we have
-   * enough matches for the UI, or exhaust hasMore / max pages.
-   * Fixes "no limit swaps" when swaps are buried under many rewards on page 1.
+   * Node-only filter hunt: keep loading older pages until matches found.
+   * Skipped when source is indexer (server already filtered).
    */
   useEffect(() => {
     if (!address || loading) return;
+    if (historySource === 'indexer') return;
     if (historyFilter === 'all') return;
     if (hunting) return;
 
@@ -329,7 +427,6 @@ const TransactionHistory: React.FC<Props> = ({
     if (filteredHistory.length >= need) return;
     if (!hasMore && pagesLoaded > 0) return;
     if (pagesLoaded >= FILTER_HUNT_MAX_PAGES) return;
-    // Nothing loaded yet — wait for initial fetch
     if (pagesLoaded === 0 && history.length === 0) return;
 
     const gen = ++huntGen.current;
@@ -358,7 +455,6 @@ const TransactionHistory: React.FC<Props> = ({
       } catch (err: any) {
         if (cancelled || gen !== huntGen.current) return;
         console.warn('Filter hunt failed:', err);
-        // Keep existing history; show soft status only
       } finally {
         if (!cancelled && gen === huntGen.current) {
           setHunting(false);
@@ -369,10 +465,11 @@ const TransactionHistory: React.FC<Props> = ({
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- hunt when filter / match shortfall / pagination state changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     address,
     historyFilter,
+    historySource,
     filteredHistory.length,
     visibleCount,
     hasMore,
@@ -383,12 +480,10 @@ const TransactionHistory: React.FC<Props> = ({
 
   const handleShowMore = useCallback(async () => {
     const nextVisible = visibleCount + FILTER_PAGE_SIZE;
-    // Expand local window first
     if (filteredHistory.length > visibleCount) {
       setVisibleCount(nextVisible);
       return;
     }
-    // Need older pages (all filter or still hunting for more matches)
     if (!hasMore || loading || hunting) {
       setVisibleCount(nextVisible);
       return;
@@ -396,9 +491,11 @@ const TransactionHistory: React.FC<Props> = ({
     setHunting(true);
     try {
       const result = await loadOlderPages({
-        maxPages: 5,
+        maxPages: historySource === 'indexer' ? 1 : 5,
         untilMatchCount:
-          historyFilter === 'all' ? undefined : nextVisible,
+          historySource === 'indexer' || historyFilter === 'all'
+            ? nextVisible
+            : nextVisible,
         filter: historyFilter,
       });
       applyFullList(result.items);
@@ -407,6 +504,10 @@ const TransactionHistory: React.FC<Props> = ({
       hasMoreRef.current = result.hasMore;
       setFromId(result.fromId);
       setHasMore(result.hasMore);
+      if (result.nextIndexerPage != null) {
+        indexerPageRef.current = result.nextIndexerPage;
+        setIndexerPage(result.nextIndexerPage);
+      }
       const nextPages = pagesLoadedRef.current + result.pagesFetched;
       pagesLoadedRef.current = nextPages;
       setPagesLoaded(nextPages);
@@ -424,6 +525,7 @@ const TransactionHistory: React.FC<Props> = ({
     hunting,
     loadOlderPages,
     historyFilter,
+    historySource,
     applyFullList,
   ]);
 
@@ -460,12 +562,18 @@ const TransactionHistory: React.FC<Props> = ({
       <Text style={styles.title}>Transaction History</Text>
       {isDefi && (
         <Text style={styles.networkNote}>
-          DeFi testnet — filter by type (transfers, swaps, liquidity, …) or direction
+          DeFi — type filters use explorer indexer when available (like WartBunker)
+          {historySource === 'indexer'
+            ? ' · indexer'
+            : historySource === 'node'
+              ? ' · node (scan older pages)'
+              : ''}
         </Text>
       )}
       {!isDefi && (
         <Text style={styles.networkNote}>
           Mainnet — filter rewards, transfers, or in/out
+          {historySource === 'node' ? ' · node history' : ''}
         </Text>
       )}
 
@@ -534,7 +642,9 @@ const TransactionHistory: React.FC<Props> = ({
               <ActivityIndicator size="small" color={defiColors.goldHover} />
               <Text style={styles.refreshingText}>
                 {filterBusy
-                  ? 'Searching older transactions (like WartBunker)…'
+                  ? historySource === 'indexer'
+                    ? 'Loading filtered history…'
+                    : 'Scanning older node history for matches…'
                   : 'Updating history…'}
               </Text>
             </View>
