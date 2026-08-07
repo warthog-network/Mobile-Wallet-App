@@ -20,7 +20,20 @@ export class TokenDecimals {
             throw new Error("Invalid decimals");
         }
     }
+
+    /**
+     * warthog-js alias: TokenPrecision used `.precision` for the same field.
+     */
+    get precision(): number {
+        return this.decimals;
+    }
 }
+
+/**
+ * Alias for {@link TokenDecimals} matching warthog-js / wallet DeFi code
+ * (`new TokenPrecision(8)`). Same type; prefer TokenDecimals in new code.
+ */
+export { TokenDecimals as TokenPrecision };
 
 /**
  * Represents a parsed decimal string as a 64-bit integer with decimal place info.

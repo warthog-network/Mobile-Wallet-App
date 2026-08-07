@@ -243,7 +243,7 @@ export const fetchBlock = async (
       return null;
     }
 
-    const data = result.data as BlockData & {
+    const data = result.data as unknown as BlockData & {
       header?: { timestamp?: number; time?: { timestamp?: number } };
     };
 

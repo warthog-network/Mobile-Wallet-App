@@ -1,4 +1,14 @@
-export { Funds, ParsedFunds, TokenDecimals, Wart, CompactFee, RoundedFee, Liquidity, MAX_U64 } from "./src/types/Funds";
+export {
+    Funds,
+    ParsedFunds,
+    TokenDecimals,
+    TokenPrecision,
+    Wart,
+    CompactFee,
+    RoundedFee,
+    Liquidity,
+    MAX_U64,
+} from "./src/types/Funds";
 export { Price } from "./src/types/Price";
 export { Account } from "./src/types/Account";
 export { Address } from "./src/types/Address";
@@ -21,3 +31,4 @@ export type {
     ChainPinFields,
     SubmitTransactionData,
 } from "./src/types/Api";
+export { encodeLimitPrice } from "./src/util/encodeLimitPrice";

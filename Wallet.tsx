@@ -852,12 +852,23 @@ const Wallet: React.FC = () => {
     }
   };
 
-  const enableBiometricsOnCurrent = async () => {
-    if (!wallet) return Alert.alert('Unlock first', 'Open your wallet, then enable biometrics.');
+  const enableBiometricsOnCurrent = async (opts?: {
+    require2fa?: boolean;
+    password?: string | null;
+  }) => {
+    if (!wallet) {
+      Alert.alert('Unlock first', 'Open your wallet, then enable biometrics.');
+      throw new Error('Wallet locked');
+    }
     const tag = (currentWalletName || saveWalletName || 'Main').trim() || 'Main';
+    const want2fa = Boolean(opts?.require2fa);
+    const pwd = opts?.password?.trim() || null;
     try {
       setPasskeyBusy(true);
-      const enc = await persistNamedWallet(wallet, tag, null, { withBiometrics: true });
+      const enc = await persistNamedWallet(wallet, tag, pwd, {
+        withBiometrics: true,
+        require2fa: want2fa,
+      });
       await storage.setItemAsync(SECURE_STORE_KEYS.wallet(tag), enc);
       if (!savedWalletNames.includes(tag)) {
         const updatedNames = [...savedWalletNames, tag];
@@ -865,13 +876,60 @@ const Wallet: React.FC = () => {
         await storage.setItemAsync(SECURE_STORE_KEYS.walletNames, JSON.stringify(updatedNames));
       }
       setCurrentWalletName(tag);
-      Alert.alert('✅ Biometrics enabled', `Next login: Unlock with ${bioLabel} for “${tag}”`);
+      Alert.alert(
+        want2fa ? '✅ 2FA enabled' : '✅ Biometrics enabled',
+        want2fa
+          ? `Next login: password + ${bioLabel} for “${tag}”`
+          : `Next login: Unlock with ${bioLabel} for “${tag}”`,
+      );
     } catch (e: any) {
       Alert.alert('Failed', e.message || 'Could not enable biometrics');
+      throw e;
     } finally {
       setPasskeyBusy(false);
     }
   };
+
+  const [toolsSecurity, setToolsSecurity] = useState<{
+    walletName: string;
+    hasPasskey: boolean;
+    hasPassword: boolean;
+    require2fa: boolean;
+    biometricsSupported: boolean;
+    bioLabel: string;
+  } | null>(null);
+
+  const refreshToolsSecurity = useCallback(async () => {
+    if (!isLoggedIn || !wallet) {
+      setToolsSecurity(null);
+      return;
+    }
+    const tag = (currentWalletName || 'Main').trim() || 'Main';
+    let hasPasskey = false;
+    let hasPassword = false;
+    let require2fa = false;
+    try {
+      const raw = await storage.getItemAsync(SECURE_STORE_KEYS.wallet(tag));
+      const info = inspectWalletBlob(raw);
+      hasPasskey = info.hasPasskey;
+      hasPassword = info.hasPassword;
+      require2fa = info.require2fa;
+    } catch {
+      /* ignore */
+    }
+    setToolsSecurity({
+      walletName: tag,
+      hasPasskey,
+      hasPassword,
+      require2fa,
+      biometricsSupported,
+      bioLabel,
+    });
+  }, [isLoggedIn, wallet, currentWalletName, biometricsSupported, bioLabel]);
+
+  useEffect(() => {
+    if (showToolsModal) void refreshToolsSecurity();
+  }, [showToolsModal, refreshToolsSecurity]);
 
   const downloadCurrentWallet = async () => {
     setModalError(null);
@@ -2307,7 +2365,18 @@ const Wallet: React.FC = () => {
         />
       ) : null}
 
-      <ToolsModal visible={showToolsModal} onClose={() => setShowToolsModal(false)} />
+      <ToolsModal
+        visible={showToolsModal}
+        onClose={() => setShowToolsModal(false)}
+        security={isLoggedIn && wallet ? toolsSecurity : null}
+        securityBusy={passkeyBusy}
+        onEnableBiometrics={
+          isLoggedIn && wallet
+            ? (opts) => enableBiometricsOnCurrent(opts)
+            : undefined
+        }
+        onRefreshSecurity={refreshToolsSecurity}
+      />
 
       {error && <Text style={styles.error}>{error}</Text>}
     </View>

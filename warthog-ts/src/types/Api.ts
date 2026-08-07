@@ -226,6 +226,72 @@ export class WarthogApi {
     }
 
     /**
+     * Account balance for a specific asset (DeFi).
+     */
+    async getAccountAssetBalance(
+        address: string,
+        assetHash: string,
+    ): Promise<ApiResult<Record<string, unknown>>> {
+        const hash = assetHash.replace(/^0x/i, '').toLowerCase();
+        return this.request(`/account/${address}/balance/asset:${hash}`);
+    }
+
+    /**
+     * All open limit orders for an account (DeFi).
+     */
+    async getOpenOrders(address: string): Promise<ApiResult<unknown>> {
+        return this.request(`/account/${address}/open_orders`);
+    }
+
+    /**
+     * Open limit orders for one asset (DeFi).
+     */
+    async getOpenOrdersForAsset(
+        address: string,
+        assetHash: string,
+    ): Promise<ApiResult<unknown>> {
+        const hash = assetHash.replace(/^0x/i, '').toLowerCase();
+        return this.request(`/account/${address}/open_orders/${hash}`);
+    }
+
+    /**
+     * Pending mempool transactions for an account.
+     */
+    async getAccountMempool(address: string): Promise<ApiResult<unknown>> {
+        return this.request(`/account/${address}/mempool`);
+    }
+
+    /**
+     * Search assets by name and/or hash prefix (DeFi).
+     */
+    async searchAssets(
+        namePrefix: string,
+        hashPrefix?: string,
+    ): Promise<ApiResult<unknown>> {
+        const queryParams: Record<string, string> = { namePrefix };
+        if (hashPrefix) {
+            queryParams.hashPrefix = hashPrefix;
+        }
+        return this.request('/asset/complete', { queryParams });
+    }
+
+    /**
+     * Look up a single asset by 64-char hash (DeFi).
+     */
+    async lookupAsset(assetHash: string): Promise<ApiResult<Record<string, unknown>>> {
+        const hash = assetHash.replace(/^0x/i, '').toLowerCase();
+        return this.request(`/asset/lookup/${hash}`);
+    }
+
+    /**
+     * DEX market / pool info for an asset (DeFi).
+     */
+    async getDexMarket(assetHash: string): Promise<ApiResult<Record<string, unknown>>> {
+        const hash = assetHash.replace(/^0x/i, '').toLowerCase();
+        return this.request(`/dex/market/${hash}`);
+    }
+
+    /**
      * Account history cursor page.
      */
     async getAccountHistory(account: string, cursor: number | string): Promise<ApiResult<unknown>> {

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   StyleSheet,
+  Switch,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { Alert } from 'react-native';
@@ -16,26 +17,70 @@ import { validateWarthogAddressInput } from '../../utils/warthogFormat';
 import { defiColors, defiStyles } from '../defi/defiStyles';
 import { theme } from '../../theme';
 
-type ToolId = 'numbers' | 'validate';
+type ToolId = 'security' | 'numbers' | 'validate';
+
+export type ToolsSecurityStatus = {
+  walletName: string;
+  hasPasskey: boolean;
+  hasPassword: boolean;
+  require2fa: boolean;
+  biometricsSupported: boolean;
+  bioLabel: string;
+};
 
 interface Props {
   visible: boolean;
   onClose: () => void;
+  /** When logged in — passkey/biometrics + 2FA (wartbunker Tools parity). */
+  security?: ToolsSecurityStatus | null;
+  securityBusy?: boolean;
+  onEnableBiometrics?: (opts: {
+    require2fa: boolean;
+    password?: string | null;
+  }) => Promise<void>;
+  onRefreshSecurity?: () => void | Promise<void>;
 }
 
-const ToolsModal: React.FC<Props> = ({ visible, onClose }) => {
-  const [activeTool, setActiveTool] = useState<ToolId>('numbers');
+const ToolsModal: React.FC<Props> = ({
+  visible,
+  onClose,
+  security = null,
+  securityBusy = false,
+  onEnableBiometrics,
+  onRefreshSecurity,
+}) => {
+  const [activeTool, setActiveTool] = useState<ToolId>('security');
   const [address, setAddress] = useState('');
-  const [validateResult, setValidateResult] = useState<ReturnType<typeof validateWarthogAddressInput> | null>(null);
+  const [validateResult, setValidateResult] = useState<ReturnType<
+    typeof validateWarthogAddressInput
+  > | null>(null);
   const [isValidating, setIsValidating] = useState(false);
+  const [want2fa, setWant2fa] = useState(false);
+  const [secPassword, setSecPassword] = useState('');
 
-  const toolOptions = useMemo(
-    () => [
-      { id: 'numbers' as const, label: 'Number Display' },
-      { id: 'validate' as const, label: 'Validate Address' },
-    ],
-    []
-  );
+  useEffect(() => {
+    if (!visible) return;
+    if (security?.require2fa) setWant2fa(true);
+    void onRefreshSecurity?.();
+  }, [visible, security?.require2fa, onRefreshSecurity]);
+
+  const toolOptions = useMemo(() => {
+    const opts: { id: ToolId; label: string }[] = [];
+    if (security && onEnableBiometrics) {
+      opts.push({ id: 'security', label: 'Login security' });
+    }
+    opts.push(
+      { id: 'numbers', label: 'Number Display' },
+      { id: 'validate', label: 'Validate Address' },
+    );
+    return opts;
+  }, [security, onEnableBiometrics]);
+
+  useEffect(() => {
+    if (!toolOptions.some((t) => t.id === activeTool)) {
+      setActiveTool(toolOptions[0]?.id || 'numbers');
+    }
+  }, [toolOptions, activeTool]);
 
   const handleValidateAddress = () => {
     setIsValidating(true);
@@ -54,6 +99,28 @@ const ToolsModal: React.FC<Props> = ({ visible, onClose }) => {
     Alert.alert('Copied', 'Address copied to clipboard');
   };
 
+  const runEnable = async (force2fa?: boolean) => {
+    if (!onEnableBiometrics || !security) return;
+    const twoFactor = force2fa ?? want2fa;
+    if (twoFactor && !secPassword.trim() && !security.hasPassword) {
+      Alert.alert(
+        'Password needed',
+        '2FA needs a password — enter the wallet password below.',
+      );
+      return;
+    }
+    try {
+      await onEnableBiometrics({
+        require2fa: twoFactor,
+        password: secPassword.trim() || null,
+      });
+      setSecPassword('');
+      void onRefreshSecurity?.();
+    } catch {
+      // Parent shows Alert
+    }
+  };
+
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={defiStyles.modalOverlay}>
@@ -65,8 +132,8 @@ const ToolsModal: React.FC<Props> = ({ visible, onClose }) => {
           <View style={defiStyles.modalAccent} />
           <Text style={defiStyles.modalTitle}>Tools</Text>
           <Text style={styles.intro}>
-            Utility helpers for display preferences and address checks — synced with wartbunker number
-            display settings.
+            Utility helpers for login security (passkey/biometrics + 2FA), display preferences, and
+            address checks — aligned with wartbunker Tools.
           </Text>
 
           <View style={styles.toolTabs}>
@@ -87,6 +154,126 @@ const ToolsModal: React.FC<Props> = ({ visible, onClose }) => {
               </TouchableOpacity>
             ))}
           </View>
+
+          {activeTool === 'security' && security && onEnableBiometrics ? (
+            <View
+              style={[
+                styles.toolPanel,
+                security.require2fa
+                  ? styles.panel2fa
+                  : security.hasPasskey
+                    ? styles.panelOk
+                    : styles.panelWarn,
+              ]}
+            >
+              <Text style={styles.panelTitle}>Biometrics &amp; 2FA login</Text>
+              <Text style={styles.panelDesc}>
+                Enable {security.bioLabel} unlock for “{security.walletName || 'this wallet'}”,
+                optionally require password + biometrics (2FA) like wartbunker Tools.
+              </Text>
+
+              {!security.biometricsSupported ? (
+                <Text style={styles.resultErrText}>
+                  Biometrics are not available on this device.
+                </Text>
+              ) : (
+                <>
+                  {security.require2fa ? (
+                    <Text style={styles.statusOk}>
+                      ✓ 2FA active — password then {security.bioLabel} at login
+                    </Text>
+                  ) : security.hasPasskey ? (
+                    <Text style={styles.statusOk}>
+                      ✓ {security.bioLabel} unlock enabled
+                    </Text>
+                  ) : (
+                    <Text style={styles.panelDesc}>
+                      Not enabled yet. You can add biometrics without leaving the wallet.
+                    </Text>
+                  )}
+
+                  <View style={styles.switchRow}>
+                    <View style={{ flex: 1, paddingRight: 12 }}>
+                      <Text style={styles.switchLabel}>Require 2FA</Text>
+                      <Text style={styles.switchHint}>
+                        Password and {security.bioLabel} every login
+                      </Text>
+                    </View>
+                    <Switch
+                      value={want2fa}
+                      onValueChange={setWant2fa}
+                      disabled={securityBusy}
+                      trackColor={{
+                        false: defiColors.borderMuted,
+                        true: defiColors.goldHover,
+                      }}
+                    />
+                  </View>
+
+                  {(want2fa || !security.hasPassword) && (
+                    <>
+                      <Text style={styles.inputLabel}>
+                        Wallet password{want2fa ? ' (required for 2FA)' : ' (optional)'}
+                      </Text>
+                      <TextInput
+                        style={styles.input}
+                        value={secPassword}
+                        onChangeText={setSecPassword}
+                        placeholder={want2fa ? 'Password for 2FA' : 'Optional password'}
+                        placeholderTextColor={defiColors.textMuted}
+                        secureTextEntry
+                        autoCapitalize="none"
+                        editable={!securityBusy}
+                      />
+                    </>
+                  )}
+
+                  <TouchableOpacity
+                    style={[
+                      styles.actionBtn,
+                      styles.actionBtnBlock,
+                      (securityBusy || !security.biometricsSupported) &&
+                        styles.actionBtnDisabled,
+                    ]}
+                    onPress={() => void runEnable(want2fa)}
+                    disabled={securityBusy || !security.biometricsSupported}
+                  >
+                    {securityBusy ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <Text style={styles.actionBtnText}>
+                        {want2fa
+                          ? security.hasPasskey
+                            ? `Update ${security.bioLabel} + 2FA`
+                            : `Enable ${security.bioLabel} with 2FA`
+                          : security.hasPasskey
+                            ? `Re-register ${security.bioLabel}`
+                            : `Enable ${security.bioLabel}`}
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+
+                  {security.hasPasskey && !security.require2fa ? (
+                    <TouchableOpacity
+                      style={[
+                        styles.actionBtnSecondary,
+                        securityBusy && styles.actionBtnDisabled,
+                      ]}
+                      onPress={() => {
+                        setWant2fa(true);
+                        void runEnable(true);
+                      }}
+                      disabled={securityBusy}
+                    >
+                      <Text style={styles.actionBtnSecondaryText}>
+                        Enable 2FA (password + {security.bioLabel})
+                      </Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </>
+              )}
+            </View>
+          ) : null}
 
           {activeTool === 'numbers' ? (
             <View style={styles.toolPanel}>
@@ -133,7 +320,9 @@ const ToolsModal: React.FC<Props> = ({ visible, onClose }) => {
                     <>
                       <Text style={styles.resultOkText}>{validateResult.message}</Text>
                       <Text style={styles.resultMeta}>Address</Text>
-                      <TouchableOpacity onPress={() => copyAddress(validateResult.fullAddress || '')}>
+                      <TouchableOpacity
+                        onPress={() => copyAddress(validateResult.fullAddress || '')}
+                      >
                         <Text style={styles.resultAddress}>{validateResult.fullAddress}</Text>
                       </TouchableOpacity>
                       <Text style={styles.resultHint}>Tap to copy</Text>
@@ -199,6 +388,18 @@ const styles = StyleSheet.create({
     padding: theme.spacing.md,
     marginBottom: theme.spacing.md,
   },
+  panelOk: {
+    borderColor: 'rgba(52, 211, 153, 0.35)',
+    backgroundColor: 'rgba(6, 78, 59, 0.2)',
+  },
+  panel2fa: {
+    borderColor: 'rgba(56, 189, 248, 0.4)',
+    backgroundColor: 'rgba(12, 74, 110, 0.25)',
+  },
+  panelWarn: {
+    borderColor: 'rgba(245, 158, 11, 0.45)',
+    backgroundColor: 'rgba(120, 53, 15, 0.2)',
+  },
   panelTitle: {
     color: theme.colors.textPrimary,
     fontSize: theme.typography.body,
@@ -210,6 +411,27 @@ const styles = StyleSheet.create({
     fontSize: theme.typography.caption,
     marginBottom: theme.spacing.md,
     lineHeight: 18,
+  },
+  statusOk: {
+    color: defiColors.gold,
+    fontWeight: theme.typography.semiBold,
+    fontSize: theme.typography.caption,
+    marginBottom: theme.spacing.md,
+  },
+  switchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: theme.spacing.md,
+  },
+  switchLabel: {
+    color: theme.colors.textPrimary,
+    fontSize: theme.typography.bodySm,
+    fontWeight: theme.typography.semiBold,
+  },
+  switchHint: {
+    color: defiColors.textMuted,
+    fontSize: 11,
+    marginTop: 2,
   },
   inputLabel: {
     color: defiColors.textSecondary,
@@ -235,6 +457,26 @@ const styles = StyleSheet.create({
     backgroundColor: defiColors.goldHover,
     borderWidth: 1,
     borderColor: defiColors.goldHover,
+  },
+  actionBtnBlock: {
+    alignSelf: 'stretch',
+    alignItems: 'center',
+    marginBottom: theme.spacing.sm,
+  },
+  actionBtnSecondary: {
+    alignSelf: 'stretch',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: theme.borderRadius.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(113, 113, 122, 0.75)',
+    backgroundColor: 'rgba(63, 63, 70, 0.45)',
+  },
+  actionBtnSecondaryText: {
+    color: defiColors.textSecondary,
+    fontWeight: theme.typography.semiBold,
+    fontSize: theme.typography.caption,
   },
   actionBtnDisabled: {
     opacity: 0.4,
