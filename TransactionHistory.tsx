@@ -5,7 +5,7 @@
 // ENHANCED: Contact names instead of raw addresses
 // FIXED: Infinite refresh loop (onRefresh in fetch deps + callback)
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -13,10 +13,18 @@ import {
   StyleSheet,
   Alert,
   ActivityIndicator,
+  ScrollView,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { useAddressBook } from './components/AddressBook/AddressBookModal';
 import { fetchAccountHistory, type NormalizedHistoryTx } from './utils/historyParser';
+import {
+  DEFI_HISTORY_FILTERS,
+  MAINNET_HISTORY_FILTERS,
+  filterEmptyMessage,
+  matchesHistoryFilter,
+  type HistoryFilterId,
+} from './utils/historyFilters';
 import { isDefiNode } from './utils/nodes';
 import { defiColors } from './components/defi/defiStyles';
 import { theme } from './theme';
@@ -38,8 +46,11 @@ const TransactionHistory: React.FC<Props> = ({
   const [loading, setLoading] = useState(false);
   const [visibleCount, setVisibleCount] = useState(7);
   const [showTransactions, setShowTransactions] = useState(false);
+  const [historyFilter, setHistoryFilter] = useState<HistoryFilterId>('all');
   const [error, setError] = useState<string | null>(null);
   const requestId = useRef(0);
+  const isDefi = isDefiNode(node);
+  const filters = isDefi ? DEFI_HISTORY_FILTERS : MAINNET_HISTORY_FILTERS;
 
   const { addContact, getContactByAddress } = useAddressBook();
 
@@ -113,6 +124,7 @@ const TransactionHistory: React.FC<Props> = ({
     setError(null);
 
     const now = Date.now() / 1000;
+    // Reward chips always use full unfiltered history (same as wartbunker)
     const rewards = items.filter((tx) => tx.isReward);
 
     setBlockCounts({
@@ -130,6 +142,11 @@ const TransactionHistory: React.FC<Props> = ({
         .map((tx) => tx.txid),
     });
   }, []);
+
+  const filteredHistory = useMemo(() => {
+    if (historyFilter === 'all') return history;
+    return history.filter((tx) => matchesHistoryFilter(tx, historyFilter, address));
+  }, [history, historyFilter, address]);
 
   const fetchHistory = useCallback(async (options?: { syncWallet?: boolean }) => {
     if (!address) return;
@@ -160,8 +177,14 @@ const TransactionHistory: React.FC<Props> = ({
   }, [address, node, applyHistoryResult, onRefresh]);
 
   useEffect(() => {
+    // Drop DeFi-only filters when switching to mainnet
+    setHistoryFilter('all');
     if (address) fetchHistory();
   }, [address, node]); // eslint-disable-line react-hooks/exhaustive-deps -- fetch on address/node only
+
+  useEffect(() => {
+    setVisibleCount(7);
+  }, [historyFilter]);
 
   const copy = (text: string, label: string) => {
     Clipboard.setStringAsync(text);
@@ -186,14 +209,14 @@ const TransactionHistory: React.FC<Props> = ({
       </View>
 
       <Text style={styles.title}>Transaction History</Text>
-      {isDefiNode(node) && (
+      {isDefi && (
         <Text style={styles.networkNote}>
-          DeFi testnet — includes WART transfers, assets, DEX orders, liquidity, and more
+          DeFi testnet — filter by type (transfers, swaps, liquidity, …) or direction
         </Text>
       )}
-      {!isDefiNode(node) && (
+      {!isDefi && (
         <Text style={styles.networkNote}>
-          Mainnet — WART transfers and block rewards
+          Mainnet — filter rewards, transfers, or in/out
         </Text>
       )}
 
@@ -215,6 +238,39 @@ const TransactionHistory: React.FC<Props> = ({
         </TouchableOpacity>
       </View>
 
+      {/* Type / direction filters (wartbunker + extension parity) */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.filterRow}
+        style={styles.filterScroll}
+      >
+        {filters.map((f) => {
+          const active = historyFilter === f.id;
+          return (
+            <TouchableOpacity
+              key={f.id}
+              onPress={() => setHistoryFilter(f.id)}
+              style={[styles.filterChip, active && styles.filterChipActive]}
+              accessibilityRole="button"
+              accessibilityState={{ selected: active }}
+            >
+              <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>
+                {f.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+      {historyFilter !== 'all' && history.length > 0 ? (
+        <Text style={styles.filterMeta}>
+          {filteredHistory.length} match{filteredHistory.length === 1 ? '' : 'es'}
+          {history.length !== filteredHistory.length
+            ? ` · of ${history.length} loaded`
+            : ''}
+        </Text>
+      ) : null}
+
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
       {showTransactions && (
@@ -230,8 +286,10 @@ const TransactionHistory: React.FC<Props> = ({
             <ActivityIndicator size="large" color={defiColors.goldHover} style={{ margin: 30 }} />
           ) : history.length === 0 ? (
             <Text style={styles.noTx}>{error ? 'Could not load transactions' : 'No transactions yet'}</Text>
+          ) : filteredHistory.length === 0 ? (
+            <Text style={styles.noTx}>{filterEmptyMessage(historyFilter)}</Text>
           ) : (
-            history.slice(0, visibleCount).map((item, index) => (
+            filteredHistory.slice(0, visibleCount).map((item, index) => (
               <View key={`${item.txid}-${item.height}-${index}`} style={styles.txCard}>
                 <View style={styles.row}>
                   <Text style={styles.label}>TxID</Text>
@@ -364,7 +422,7 @@ const TransactionHistory: React.FC<Props> = ({
             ))
           )}
 
-          {history.length > visibleCount && !showInitialLoader ? (
+          {filteredHistory.length > visibleCount && !showInitialLoader ? (
             <TouchableOpacity
               onPress={() => setVisibleCount(visibleCount + 7)}
               style={styles.showMoreBtn}
@@ -397,7 +455,37 @@ const styles = StyleSheet.create({
   networkNote: { color: defiColors.textMuted, fontSize: 11, marginBottom: theme.spacing.sm },
   descriptionValue: { flex: 1, marginLeft: 12, textAlign: 'right' },
   rewardRow: { flexDirection: 'row', gap: theme.spacing.sm, marginBottom: theme.spacing.md, flexWrap: 'wrap' },
-  buttonRow: { flexDirection: 'row', gap: theme.spacing.sm, marginBottom: theme.spacing.md, flexWrap: 'wrap' },
+  buttonRow: { flexDirection: 'row', gap: theme.spacing.sm, marginBottom: theme.spacing.sm, flexWrap: 'wrap' },
+  filterScroll: { marginBottom: theme.spacing.sm, maxHeight: 40 },
+  filterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 2,
+  },
+  filterChip: {
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: theme.borderRadius.sm,
+    backgroundColor: defiColors.bgInset,
+    borderWidth: 1,
+    borderColor: defiColors.borderMuted,
+  },
+  filterChipActive: {
+    backgroundColor: defiColors.goldHover,
+    borderColor: defiColors.goldHover,
+  },
+  filterChipText: {
+    color: defiColors.textSecondary,
+    fontSize: theme.typography.tiny,
+    fontWeight: theme.typography.semiBold,
+  },
+  filterChipTextActive: { color: '#ffffff' },
+  filterMeta: {
+    color: defiColors.textMuted,
+    fontSize: 11,
+    marginBottom: theme.spacing.sm,
+  },
   rewardPill: {
     backgroundColor: defiColors.bgInset,
     paddingHorizontal: 10,

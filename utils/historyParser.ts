@@ -274,15 +274,20 @@ function normalizeTransaction(
   };
 }
 
+/** Normalize node body keys → filter-friendly type hints (snake-ish / camel both ok). */
 function categoryHintFromKey(key: string): string {
-  const lower = key.toLowerCase();
+  const lower = key.toLowerCase().replace(/-/g, '_');
   if (lower.includes('reward')) return 'reward';
-  if (lower.includes('wart')) return 'wartTransfer';
-  if (lower.includes('token')) return 'tokenTransfer';
-  if (lower.includes('limit')) return 'limitSwap';
-  if (lower.includes('liquiditydeposit')) return 'liquidityDeposit';
-  if (lower.includes('liquiditywithdraw')) return 'liquidityWithdrawal';
-  if (lower.includes('asset')) return 'assetCreation';
+  if (lower.includes('wart')) return 'wart_transfer';
+  if (lower.includes('token')) return 'token_transfer';
+  if (lower.includes('limit')) return 'limit_swap';
+  if (lower.includes('liquiditydeposit') || lower === 'liquidity_deposit') {
+    return 'liquidity_deposit';
+  }
+  if (lower.includes('liquiditywithdraw') || lower.includes('liquidity_withdraw')) {
+    return 'liquidity_withdrawal';
+  }
+  if (lower.includes('asset')) return 'asset_creation';
   if (lower.includes('match')) return 'match';
   if (lower.includes('cancel')) return 'cancelation';
   return key;
