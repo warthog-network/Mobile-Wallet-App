@@ -436,15 +436,30 @@ const Wallet: React.FC = () => {
   const [showDownloadModal, setShowDownloadModal] = useState(false);
   const [downloadPassword, setDownloadPassword] = useState('');
 
-  useEffect(() => {
-    void (async () => {
+  const refreshBiometricsCapability = useCallback(async () => {
+    try {
       const ok = await isBiometricsAvailable();
       setBiometricsSupported(ok);
-      setEnableBioOnSave(ok);
-      setEnableBioOnCreate(ok);
       setBioLabel(await biometricsLabel());
-    })();
+      return ok;
+    } catch {
+      // Never hide the whole security UI because a probe failed
+      setBiometricsSupported(true);
+      setBioLabel('Device lock');
+      return true;
+    }
   }, []);
+
+  useEffect(() => {
+    void (async () => {
+      const ok = await refreshBiometricsCapability();
+      // First load only: default create/save toggles on when device can authenticate
+      if (ok) {
+        setEnableBioOnSave(true);
+        setEnableBioOnCreate(true);
+      }
+    })();
+  }, [refreshBiometricsCapability]);
 
   useEffect(() => {
     const loadSavedWallets = async () => {
@@ -719,7 +734,7 @@ const Wallet: React.FC = () => {
   const continueToSeedBackup = () => {
     setModalError(null);
     if (!walletName.trim()) return setModalError('Enter a wallet name first');
-    const wantBio = enableBioOnCreate && biometricsSupported;
+    const wantBio = enableBioOnCreate;
     const wantPassword = Boolean(password);
     if (!wantBio && !wantPassword) {
       return setModalError('Enable biometrics and/or set a password for next login');
@@ -748,7 +763,7 @@ const Wallet: React.FC = () => {
     if (savedWalletNames.includes(walletName) && walletAction === 'create') {
       return setModalError('Wallet name already exists. Choose a different name.');
     }
-    const wantBio = enableBioOnCreate && biometricsSupported;
+    const wantBio = enableBioOnCreate;
     if (!password && !wantBio) return setModalError('Enable biometrics and/or set a password');
     if (password) {
       if (getPasswordStrength(password).level < 3) return setModalError('Password is too weak. Must be at least Good strength.');
@@ -813,7 +828,7 @@ const Wallet: React.FC = () => {
     setModalError(null);
     if (!saveWalletName) return setModalError('Enter a wallet name');
     if (savedWalletNames.includes(saveWalletName) && saveWalletName !== currentWalletName) return setModalError('Wallet name already exists. Choose a different name.');
-    const wantBio = enableBioOnSave && biometricsSupported;
+    const wantBio = enableBioOnSave;
     if (!savePassword && !wantBio) return setModalError('Enable biometrics and/or set a password');
     if (savePassword) {
       if (getPasswordStrength(savePassword).level < 3) return setModalError('Password is too weak. Must be at least Good strength.');
@@ -904,6 +919,9 @@ const Wallet: React.FC = () => {
       setToolsSecurity(null);
       return;
     }
+    // Re-probe every time Tools opens — capability can change after system settings
+    const bioOk = await refreshBiometricsCapability();
+    const label = await biometricsLabel();
     const tag = (currentWalletName || 'Main').trim() || 'Main';
     let hasPasskey = false;
     let hasPassword = false;
@@ -922,14 +940,22 @@ const Wallet: React.FC = () => {
       hasPasskey,
       hasPassword,
       require2fa,
-      biometricsSupported,
-      bioLabel,
+      // Always expose the panel when logged in; capability flag still drives enable path
+      biometricsSupported: bioOk,
+      bioLabel: label,
     });
-  }, [isLoggedIn, wallet, currentWalletName, biometricsSupported, bioLabel]);
+  }, [isLoggedIn, wallet, currentWalletName, refreshBiometricsCapability]);
 
   useEffect(() => {
     if (showToolsModal) void refreshToolsSecurity();
   }, [showToolsModal, refreshToolsSecurity]);
+
+  // Re-check biometrics when opening unlock / create flows
+  useEffect(() => {
+    if (!isLoggedIn && (accessPath === 'login' || accessPath === 'create' || accessPath === 'hub')) {
+      void refreshBiometricsCapability();
+    }
+  }, [isLoggedIn, accessPath, refreshBiometricsCapability]);
 
   const downloadCurrentWallet = async () => {
     setModalError(null);
@@ -1443,7 +1469,7 @@ const Wallet: React.FC = () => {
                     </>
                   ) : (
                     <>
-                      {selectedLoginHasPasskey && biometricsSupported && (
+                      {selectedLoginHasPasskey && (
                         <TouchableOpacity
                           style={[styles.bigButton, styles.bigButtonPrimary]}
                           disabled={passkeyBusy}
@@ -1452,7 +1478,9 @@ const Wallet: React.FC = () => {
                           }
                         >
                           <Text style={styles.bigButtonPrimaryText}>
-                            {passkeyBusy ? 'Waiting…' : `Unlock with ${bioLabel}`}
+                            {passkeyBusy
+                              ? 'Waiting…'
+                              : `Unlock with ${bioLabel} (passkey)`}
                           </Text>
                         </TouchableOpacity>
                       )}
@@ -1763,37 +1791,35 @@ const Wallet: React.FC = () => {
                 </Text>
                 <Text style={styles.label}>Wallet Name</Text>
                 <StyledTextInput placeholder="e.g. main" value={walletName} onChangeText={setWalletName} />
-                {biometricsSupported && (
-                  <>
-                    <TouchableOpacity
-                      style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 8 }}
-                      onPress={() => {
-                        setEnableBioOnCreate(!enableBioOnCreate);
-                        if (enableBioOnCreate) setRequire2faOnCreate(false);
-                      }}
-                    >
-                      <View style={{ width: 20, height: 20, borderWidth: 1, borderColor: defiColors.goldHover, marginRight: 10, backgroundColor: enableBioOnCreate ? defiColors.goldHover : 'transparent' }} />
-                      <Text style={{ color: theme.colors.textSecondary, fontSize: 14 }}>Enable {bioLabel} unlock</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}
-                      onPress={() => {
-                        setRequire2faOnCreate(!require2faOnCreate);
-                        if (!require2faOnCreate) setEnableBioOnCreate(true);
-                      }}
-                    >
-                      <View style={{ width: 20, height: 20, borderWidth: 1, borderColor: defiColors.goldHover, marginRight: 10, backgroundColor: require2faOnCreate ? defiColors.goldHover : 'transparent' }} />
-                      <Text style={{ color: theme.colors.textSecondary, fontSize: 14 }}>
-                        Optional 2FA: require password + {bioLabel}
-                      </Text>
-                    </TouchableOpacity>
-                  </>
-                )}
+                <TouchableOpacity
+                  style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 8 }}
+                  onPress={() => {
+                    setEnableBioOnCreate(!enableBioOnCreate);
+                    if (enableBioOnCreate) setRequire2faOnCreate(false);
+                  }}
+                >
+                  <View style={{ width: 20, height: 20, borderWidth: 1, borderColor: defiColors.goldHover, marginRight: 10, backgroundColor: enableBioOnCreate ? defiColors.goldHover : 'transparent' }} />
+                  <Text style={{ color: theme.colors.textSecondary, fontSize: 14 }}>
+                    Enable passkey ({bioLabel}) unlock
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}
+                  onPress={() => {
+                    setRequire2faOnCreate(!require2faOnCreate);
+                    if (!require2faOnCreate) setEnableBioOnCreate(true);
+                  }}
+                >
+                  <View style={{ width: 20, height: 20, borderWidth: 1, borderColor: defiColors.goldHover, marginRight: 10, backgroundColor: require2faOnCreate ? defiColors.goldHover : 'transparent' }} />
+                  <Text style={{ color: theme.colors.textSecondary, fontSize: 14 }}>
+                    Optional 2FA: require password + {bioLabel}
+                  </Text>
+                </TouchableOpacity>
                 <Text style={styles.label}>
                   {require2faOnCreate
                     ? 'Password (required for 2FA)'
-                    : enableBioOnCreate && biometricsSupported
-                      ? 'Password (optional if biometrics is on)'
+                    : enableBioOnCreate
+                      ? 'Password (optional if passkey is on)'
                       : 'Password'}
                 </Text>
                 <StyledTextInput placeholder="Password" secureTextEntry={!showPassword} value={password} onChangeText={setPassword} />
@@ -1894,7 +1920,7 @@ const Wallet: React.FC = () => {
                   <Text style={styles.bigButtonPrimaryText}>
                     {passkeyBusy
                       ? 'Waiting for biometrics…'
-                      : enableBioOnCreate && biometricsSupported
+                      : enableBioOnCreate
                         ? `Save & open (register ${bioLabel} once)`
                         : 'Save & open wallet'}
                   </Text>
@@ -1937,58 +1963,58 @@ const Wallet: React.FC = () => {
             <Text style={styles.label}>Wallet Name</Text>
             <StyledTextInput placeholder="Enter a name for this wallet" value={saveWalletName} onChangeText={setSaveWalletName} />
             <Text style={styles.label}>
-              {enableBioOnSave && biometricsSupported
+              {enableBioOnSave
                 ? 'Password optional if biometrics is on (required for 2FA).'
                 : 'Password must be at least 8 characters with uppercase, lowercase, number, and special character.'}
             </Text>
             <StyledTextInput placeholder="Password" secureTextEntry value={savePassword} onChangeText={setSavePassword} />
             <Text style={styles.label}>Strength: <Text style={{ color: getPasswordStrength(savePassword).level === 1 ? 'red' : getPasswordStrength(savePassword).level === 2 ? 'orange' : getPasswordStrength(savePassword).level === 3 ? 'blue' : 'green' }}>{getPasswordStrength(savePassword).label}</Text></Text>
             <StyledTextInput placeholder="Confirm Password" secureTextEntry value={saveConfirmPassword} onChangeText={setSaveConfirmPassword} />
-            {biometricsSupported && (
-              <>
-                <TouchableOpacity
-                  style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 8 }}
-                  onPress={() => {
-                    setEnableBioOnSave(!enableBioOnSave);
-                    if (enableBioOnSave) setRequire2faOnSave(false);
-                  }}
-                >
-                  <View style={{ width: 20, height: 20, borderWidth: 1, borderColor: defiColors.goldHover, marginRight: 10, backgroundColor: enableBioOnSave ? defiColors.goldHover : 'transparent' }} />
-                  <Text style={{ color: theme.colors.textSecondary, fontSize: 14 }}>Enable {bioLabel} unlock</Text>
-                </TouchableOpacity>
-                {enableBioOnSave && (
-                  <TouchableOpacity
-                    style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}
-                    onPress={() => setRequire2faOnSave(!require2faOnSave)}
-                  >
-                    <View style={{ width: 20, height: 20, borderWidth: 1, borderColor: defiColors.goldHover, marginRight: 10, backgroundColor: require2faOnSave ? defiColors.goldHover : 'transparent' }} />
-                    <Text style={{ color: theme.colors.textSecondary, fontSize: 14 }}>2FA: require password + {bioLabel}</Text>
-                  </TouchableOpacity>
-                )}
-              </>
+            <TouchableOpacity
+              style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 8 }}
+              onPress={() => {
+                setEnableBioOnSave(!enableBioOnSave);
+                if (enableBioOnSave) setRequire2faOnSave(false);
+              }}
+            >
+              <View style={{ width: 20, height: 20, borderWidth: 1, borderColor: defiColors.goldHover, marginRight: 10, backgroundColor: enableBioOnSave ? defiColors.goldHover : 'transparent' }} />
+              <Text style={{ color: theme.colors.textSecondary, fontSize: 14 }}>
+                Enable passkey ({bioLabel}) unlock
+              </Text>
+            </TouchableOpacity>
+            {enableBioOnSave && (
+              <TouchableOpacity
+                style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}
+                onPress={() => setRequire2faOnSave(!require2faOnSave)}
+              >
+                <View style={{ width: 20, height: 20, borderWidth: 1, borderColor: defiColors.goldHover, marginRight: 10, backgroundColor: require2faOnSave ? defiColors.goldHover : 'transparent' }} />
+                <Text style={{ color: theme.colors.textSecondary, fontSize: 14 }}>
+                  2FA: require password + {bioLabel}
+                </Text>
+              </TouchableOpacity>
             )}
             <TouchableOpacity style={styles.bigButton} onPress={() => void saveCurrentWallet()} disabled={passkeyBusy}>
               <Text style={styles.bigButtonText}>
                 {passkeyBusy
                   ? 'Waiting for biometrics…'
-                  : enableBioOnSave && biometricsSupported
-                    ? `Save & register ${bioLabel}`
+                  : enableBioOnSave
+                    ? `Save & register passkey (${bioLabel})`
                     : Platform.OS === 'web'
                       ? 'Save (not secure in this web demo)'
                       : 'Save Securely (Device)'}
               </Text>
             </TouchableOpacity>
-            {biometricsSupported && (
-              <TouchableOpacity
-                style={styles.bigButton}
-                disabled={passkeyBusy}
-                onPress={() => void enableBiometricsOnCurrent()}
-              >
-                <Text style={styles.bigButtonText}>
-                  {passkeyBusy ? 'Waiting…' : `Enable ${bioLabel} only (keep existing password if any)`}
-                </Text>
-              </TouchableOpacity>
-            )}
+            <TouchableOpacity
+              style={styles.bigButton}
+              disabled={passkeyBusy}
+              onPress={() => void enableBiometricsOnCurrent()}
+            >
+              <Text style={styles.bigButtonText}>
+                {passkeyBusy
+                  ? 'Waiting…'
+                  : `Enable passkey only (${bioLabel})`}
+              </Text>
+            </TouchableOpacity>
             {modalError && <Text style={styles.error}>{modalError}</Text>}
             <TouchableOpacity onPress={() => { setShowSaveModal(false); setModalError(null); setSaveWalletName(''); setSavePassword(''); setSaveConfirmPassword(''); setLogoutAfterSave(false); }}>
               <Text style={modalCloseStyle}>Close</Text>
@@ -2368,7 +2394,18 @@ const Wallet: React.FC = () => {
       <ToolsModal
         visible={showToolsModal}
         onClose={() => setShowToolsModal(false)}
-        security={isLoggedIn && wallet ? toolsSecurity : null}
+        security={
+          isLoggedIn && wallet
+            ? toolsSecurity || {
+                walletName: (currentWalletName || 'Main').trim() || 'Main',
+                hasPasskey: false,
+                hasPassword: false,
+                require2fa: false,
+                biometricsSupported: true,
+                bioLabel,
+              }
+            : null
+        }
         securityBusy={passkeyBusy}
         onEnableBiometrics={
           isLoggedIn && wallet

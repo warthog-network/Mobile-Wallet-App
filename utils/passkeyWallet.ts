@@ -134,13 +134,33 @@ export function authBadgeForBlob(raw: string | null | undefined): string {
   return 'Saved';
 }
 
+/**
+ * True if the device can authenticate the user for wallet unlock.
+ * Accepts enrolled biometrics OR a device lock (PIN / pattern / password).
+ * Older builds only checked fingerprint/face hardware+enrollment and hid the whole UI.
+ */
 export async function isBiometricsAvailable(): Promise<boolean> {
   try {
-    const hasHardware = await LocalAuthentication.hasHardwareAsync();
+    // Prefer enrolled security level when available (Expo SDK 49+)
+    if (typeof LocalAuthentication.getEnrolledLevelAsync === 'function') {
+      const level = await LocalAuthentication.getEnrolledLevelAsync();
+      // NONE = 0; SECRET = device credential; BIOMETRIC / BIOMETRIC_STRONG = biometrics
+      if (level != null && level !== LocalAuthentication.SecurityLevel.NONE) {
+        return true;
+      }
+    }
+
     const enrolled = await LocalAuthentication.isEnrolledAsync();
-    return hasHardware && enrolled;
+    if (enrolled) return true;
+
+    const hasHardware = await LocalAuthentication.hasHardwareAsync();
+    // Hardware present but nothing enrolled yet — still show the setup UI so the user
+    // can enable biometrics in system settings and retry, instead of "no option".
+    return hasHardware;
   } catch {
-    return false;
+    // On some Android builds LocalAuthentication throws without USE_BIOMETRIC permission.
+    // Still surface the UI; enable will show a clear error if auth truly fails.
+    return true;
   }
 }
 
@@ -159,19 +179,40 @@ export async function biometricsLabel(): Promise<string> {
   } catch {
     /* ignore */
   }
-  return 'Biometrics';
+  // Device PIN / pattern / password still works as passkey-equivalent unlock on mobile
+  return 'Device lock';
 }
 
 async function assertBiometrics(promptMessage: string): Promise<void> {
-  const available = await isBiometricsAvailable();
-  if (!available) {
-    throw new Error(
-      'Biometrics are not available — enable Face ID / fingerprint / device lock in system settings',
-    );
+  // Always attempt system auth — PIN/pattern counts. Only hard-fail if nothing enrolled.
+  try {
+    if (typeof LocalAuthentication.getEnrolledLevelAsync === 'function') {
+      const level = await LocalAuthentication.getEnrolledLevelAsync();
+      if (level === LocalAuthentication.SecurityLevel.NONE) {
+        throw new Error(
+          'Set a screen lock (PIN, pattern, password, fingerprint, or Face ID) in system settings first',
+        );
+      }
+    } else {
+      const enrolled = await LocalAuthentication.isEnrolledAsync();
+      const hasHardware = await LocalAuthentication.hasHardwareAsync();
+      if (!enrolled && !hasHardware) {
+        throw new Error(
+          'Biometrics / device lock are not available — enable them in system settings',
+        );
+      }
+    }
+  } catch (e) {
+    if (e instanceof Error && /screen lock|system settings|not available/i.test(e.message)) {
+      throw e;
+    }
+    // Permission / API probe failed — still try authenticateAsync below
   }
+
   const result = await LocalAuthentication.authenticateAsync({
     promptMessage,
     cancelLabel: 'Cancel',
+    // Allow PIN / pattern / password when biometrics fail or are not enrolled
     disableDeviceFallback: false,
     fallbackLabel: 'Use device PIN',
   });

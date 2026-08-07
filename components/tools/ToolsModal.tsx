@@ -64,23 +64,33 @@ const ToolsModal: React.FC<Props> = ({
     void onRefreshSecurity?.();
   }, [visible, security?.require2fa, onRefreshSecurity]);
 
+  const showSecurity = Boolean(security && onEnableBiometrics);
+
   const toolOptions = useMemo(() => {
     const opts: { id: ToolId; label: string }[] = [];
-    if (security && onEnableBiometrics) {
-      opts.push({ id: 'security', label: 'Login security' });
+    if (showSecurity) {
+      // Label matches wartbunker "Passkey" wording so users find it
+      opts.push({ id: 'security', label: 'Passkey / 2FA' });
     }
     opts.push(
       { id: 'numbers', label: 'Number Display' },
       { id: 'validate', label: 'Validate Address' },
     );
     return opts;
-  }, [security, onEnableBiometrics]);
+  }, [showSecurity]);
 
   useEffect(() => {
     if (!toolOptions.some((t) => t.id === activeTool)) {
       setActiveTool(toolOptions[0]?.id || 'numbers');
     }
   }, [toolOptions, activeTool]);
+
+  // When security becomes available (async load), open that tab first
+  useEffect(() => {
+    if (visible && showSecurity) {
+      setActiveTool('security');
+    }
+  }, [visible, showSecurity]);
 
   const handleValidateAddress = () => {
     setIsValidating(true);
@@ -132,8 +142,8 @@ const ToolsModal: React.FC<Props> = ({
           <View style={defiStyles.modalAccent} />
           <Text style={defiStyles.modalTitle}>Tools</Text>
           <Text style={styles.intro}>
-            Utility helpers for login security (passkey/biometrics + 2FA), display preferences, and
-            address checks — aligned with wartbunker Tools.
+            Passkey on mobile = biometrics or device lock (Face ID / fingerprint / PIN). Enable it
+            under Passkey / 2FA, same idea as wartbunker Tools.
           </Text>
 
           <View style={styles.toolTabs}>
@@ -166,112 +176,105 @@ const ToolsModal: React.FC<Props> = ({
                     : styles.panelWarn,
               ]}
             >
-              <Text style={styles.panelTitle}>Biometrics &amp; 2FA login</Text>
+              <Text style={styles.panelTitle}>Passkey / biometrics &amp; 2FA</Text>
               <Text style={styles.panelDesc}>
-                Enable {security.bioLabel} unlock for “{security.walletName || 'this wallet'}”,
-                optionally require password + biometrics (2FA) like wartbunker Tools.
+                On mobile, “passkey” means {security.bioLabel || 'device lock'} unlock for “
+                {security.walletName || 'this wallet'}”. Optional 2FA = password +{' '}
+                {security.bioLabel || 'device lock'} every login (same as wartbunker Tools).
               </Text>
 
-              {!security.biometricsSupported ? (
-                <Text style={styles.resultErrText}>
-                  Biometrics are not available on this device.
+              {security.require2fa ? (
+                <Text style={styles.statusOk}>
+                  ✓ 2FA active — password then {security.bioLabel} at login
+                </Text>
+              ) : security.hasPasskey ? (
+                <Text style={styles.statusOk}>
+                  ✓ Passkey ({security.bioLabel}) unlock enabled
                 </Text>
               ) : (
+                <Text style={styles.panelDesc}>
+                  Not enabled yet. Tap enable below — you will get a system prompt (fingerprint /
+                  Face ID / PIN).
+                </Text>
+              )}
+
+              {!security.biometricsSupported ? (
+                <Text style={[styles.resultErrText, { marginBottom: 12 }]}>
+                  No biometrics/device lock detected yet. Set a screen lock in Android settings,
+                  then reopen Tools — or try Enable anyway.
+                </Text>
+              ) : null}
+
+              <View style={styles.switchRow}>
+                <View style={{ flex: 1, paddingRight: 12 }}>
+                  <Text style={styles.switchLabel}>Require 2FA</Text>
+                  <Text style={styles.switchHint}>
+                    Password and {security.bioLabel} every login
+                  </Text>
+                </View>
+                <Switch
+                  value={want2fa}
+                  onValueChange={setWant2fa}
+                  disabled={securityBusy}
+                  trackColor={{
+                    false: defiColors.borderMuted,
+                    true: defiColors.goldHover,
+                  }}
+                />
+              </View>
+
+              {(want2fa || !security.hasPassword) && (
                 <>
-                  {security.require2fa ? (
-                    <Text style={styles.statusOk}>
-                      ✓ 2FA active — password then {security.bioLabel} at login
-                    </Text>
-                  ) : security.hasPasskey ? (
-                    <Text style={styles.statusOk}>
-                      ✓ {security.bioLabel} unlock enabled
-                    </Text>
-                  ) : (
-                    <Text style={styles.panelDesc}>
-                      Not enabled yet. You can add biometrics without leaving the wallet.
-                    </Text>
-                  )}
-
-                  <View style={styles.switchRow}>
-                    <View style={{ flex: 1, paddingRight: 12 }}>
-                      <Text style={styles.switchLabel}>Require 2FA</Text>
-                      <Text style={styles.switchHint}>
-                        Password and {security.bioLabel} every login
-                      </Text>
-                    </View>
-                    <Switch
-                      value={want2fa}
-                      onValueChange={setWant2fa}
-                      disabled={securityBusy}
-                      trackColor={{
-                        false: defiColors.borderMuted,
-                        true: defiColors.goldHover,
-                      }}
-                    />
-                  </View>
-
-                  {(want2fa || !security.hasPassword) && (
-                    <>
-                      <Text style={styles.inputLabel}>
-                        Wallet password{want2fa ? ' (required for 2FA)' : ' (optional)'}
-                      </Text>
-                      <TextInput
-                        style={styles.input}
-                        value={secPassword}
-                        onChangeText={setSecPassword}
-                        placeholder={want2fa ? 'Password for 2FA' : 'Optional password'}
-                        placeholderTextColor={defiColors.textMuted}
-                        secureTextEntry
-                        autoCapitalize="none"
-                        editable={!securityBusy}
-                      />
-                    </>
-                  )}
-
-                  <TouchableOpacity
-                    style={[
-                      styles.actionBtn,
-                      styles.actionBtnBlock,
-                      (securityBusy || !security.biometricsSupported) &&
-                        styles.actionBtnDisabled,
-                    ]}
-                    onPress={() => void runEnable(want2fa)}
-                    disabled={securityBusy || !security.biometricsSupported}
-                  >
-                    {securityBusy ? (
-                      <ActivityIndicator size="small" color="#fff" />
-                    ) : (
-                      <Text style={styles.actionBtnText}>
-                        {want2fa
-                          ? security.hasPasskey
-                            ? `Update ${security.bioLabel} + 2FA`
-                            : `Enable ${security.bioLabel} with 2FA`
-                          : security.hasPasskey
-                            ? `Re-register ${security.bioLabel}`
-                            : `Enable ${security.bioLabel}`}
-                      </Text>
-                    )}
-                  </TouchableOpacity>
-
-                  {security.hasPasskey && !security.require2fa ? (
-                    <TouchableOpacity
-                      style={[
-                        styles.actionBtnSecondary,
-                        securityBusy && styles.actionBtnDisabled,
-                      ]}
-                      onPress={() => {
-                        setWant2fa(true);
-                        void runEnable(true);
-                      }}
-                      disabled={securityBusy}
-                    >
-                      <Text style={styles.actionBtnSecondaryText}>
-                        Enable 2FA (password + {security.bioLabel})
-                      </Text>
-                    </TouchableOpacity>
-                  ) : null}
+                  <Text style={styles.inputLabel}>
+                    Wallet password{want2fa ? ' (required for 2FA)' : ' (optional)'}
+                  </Text>
+                  <TextInput
+                    style={styles.input}
+                    value={secPassword}
+                    onChangeText={setSecPassword}
+                    placeholder={want2fa ? 'Password for 2FA' : 'Optional password'}
+                    placeholderTextColor={defiColors.textMuted}
+                    secureTextEntry
+                    autoCapitalize="none"
+                    editable={!securityBusy}
+                  />
                 </>
               )}
+
+              <TouchableOpacity
+                style={[styles.actionBtn, styles.actionBtnBlock, securityBusy && styles.actionBtnDisabled]}
+                onPress={() => void runEnable(want2fa)}
+                disabled={securityBusy}
+              >
+                {securityBusy ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.actionBtnText}>
+                    {want2fa
+                      ? security.hasPasskey
+                        ? `Update passkey + 2FA`
+                        : `Enable passkey with 2FA`
+                      : security.hasPasskey
+                        ? `Re-register passkey (${security.bioLabel})`
+                        : `Enable passkey (${security.bioLabel})`}
+                  </Text>
+                )}
+              </TouchableOpacity>
+
+              {security.hasPasskey && !security.require2fa ? (
+                <TouchableOpacity
+                  style={[styles.actionBtnSecondary, securityBusy && styles.actionBtnDisabled]}
+                  onPress={() => {
+                    setWant2fa(true);
+                    void runEnable(true);
+                  }}
+                  disabled={securityBusy}
+                >
+                  <Text style={styles.actionBtnSecondaryText}>
+                    Enable 2FA (password + {security.bioLabel})
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
           ) : null}
 
