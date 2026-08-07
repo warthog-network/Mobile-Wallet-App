@@ -36,6 +36,44 @@ interface Props {
   onAddContact?: (address: string) => void;
 }
 
+/** Like wartbunker: client-scan older pages until enough filter matches (node has no type filter). */
+const FILTER_HUNT_MAX_PAGES = 40;
+const FILTER_PAGE_SIZE = 7;
+
+function mergeHistory(
+  prev: NormalizedHistoryTx[],
+  next: NormalizedHistoryTx[],
+): NormalizedHistoryTx[] {
+  const seen = new Set(prev.map((t) => t.txid));
+  const merged = [...prev];
+  for (const tx of next) {
+    if (!tx.txid || seen.has(tx.txid)) continue;
+    seen.add(tx.txid);
+    merged.push(tx);
+  }
+  merged.sort((a, b) => (b.height || 0) - (a.height || 0));
+  return merged;
+}
+
+function updateRewardCounts(items: NormalizedHistoryTx[]) {
+  const now = Date.now() / 1000;
+  const rewards = items.filter((tx) => tx.isReward);
+  return {
+    '24h': rewards.filter((tx) => (tx.timestamp || 0) >= now - 86400).length,
+    week: rewards.filter((tx) => (tx.timestamp || 0) >= now - 604800).length,
+    month: rewards.filter((tx) => (tx.timestamp || 0) >= now - 2592000).length,
+    rewards24h: rewards
+      .filter((tx) => (tx.timestamp || 0) >= now - 86400)
+      .map((tx) => tx.txid),
+    rewardsWeek: rewards
+      .filter((tx) => (tx.timestamp || 0) >= now - 604800)
+      .map((tx) => tx.txid),
+    rewardsMonth: rewards
+      .filter((tx) => (tx.timestamp || 0) >= now - 2592000)
+      .map((tx) => tx.txid),
+  };
+}
+
 const TransactionHistory: React.FC<Props> = ({
   address,
   node,
@@ -44,13 +82,37 @@ const TransactionHistory: React.FC<Props> = ({
 }) => {
   const [history, setHistory] = useState<NormalizedHistoryTx[]>([]);
   const [loading, setLoading] = useState(false);
-  const [visibleCount, setVisibleCount] = useState(7);
+  /** Client-side filter hunt: paging older node history until matches (wartbunker parity). */
+  const [hunting, setHunting] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(FILTER_PAGE_SIZE);
   const [showTransactions, setShowTransactions] = useState(false);
   const [historyFilter, setHistoryFilter] = useState<HistoryFilterId>('all');
   const [error, setError] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [fromId, setFromId] = useState<number | string | null>(null);
+  const [pagesLoaded, setPagesLoaded] = useState(0);
   const requestId = useRef(0);
+  const huntGen = useRef(0);
+  /** Live snapshots for async pagination (avoid stale closures mid-hunt). */
+  const historyRef = useRef<NormalizedHistoryTx[]>([]);
+  const fromIdRef = useRef<number | string | null>(null);
+  const hasMoreRef = useRef(false);
+  const pagesLoadedRef = useRef(0);
   const isDefi = isDefiNode(node);
   const filters = isDefi ? DEFI_HISTORY_FILTERS : MAINNET_HISTORY_FILTERS;
+
+  useEffect(() => {
+    historyRef.current = history;
+  }, [history]);
+  useEffect(() => {
+    fromIdRef.current = fromId;
+  }, [fromId]);
+  useEffect(() => {
+    hasMoreRef.current = hasMore;
+  }, [hasMore]);
+  useEffect(() => {
+    pagesLoadedRef.current = pagesLoaded;
+  }, [pagesLoaded]);
 
   const { addContact, getContactByAddress } = useAddressBook();
 
@@ -118,48 +180,40 @@ const TransactionHistory: React.FC<Props> = ({
     );
   };
 
-  const applyHistoryResult = useCallback((items: NormalizedHistoryTx[]) => {
-    setHistory(items);
-    setVisibleCount(7);
-    setError(null);
-
-    const now = Date.now() / 1000;
-    // Reward chips always use full unfiltered history (same as wartbunker)
-    const rewards = items.filter((tx) => tx.isReward);
-
-    setBlockCounts({
-      '24h': rewards.filter((tx) => (tx.timestamp || 0) >= now - 86400).length,
-      week: rewards.filter((tx) => (tx.timestamp || 0) >= now - 604800).length,
-      month: rewards.filter((tx) => (tx.timestamp || 0) >= now - 2592000).length,
-      rewards24h: rewards
-        .filter((tx) => (tx.timestamp || 0) >= now - 86400)
-        .map((tx) => tx.txid),
-      rewardsWeek: rewards
-        .filter((tx) => (tx.timestamp || 0) >= now - 604800)
-        .map((tx) => tx.txid),
-      rewardsMonth: rewards
-        .filter((tx) => (tx.timestamp || 0) >= now - 2592000)
-        .map((tx) => tx.txid),
-    });
-  }, []);
-
   const filteredHistory = useMemo(() => {
     if (historyFilter === 'all') return history;
     return history.filter((tx) => matchesHistoryFilter(tx, historyFilter, address));
   }, [history, historyFilter, address]);
 
+  const applyFullList = useCallback((items: NormalizedHistoryTx[]) => {
+    setHistory(items);
+    setError(null);
+    setBlockCounts(updateRewardCounts(items));
+  }, []);
+
+  /** Initial load or full refresh (first page from tip). */
   const fetchHistory = useCallback(async (options?: { syncWallet?: boolean }) => {
     if (!address) return;
 
     const id = ++requestId.current;
+    huntGen.current += 1;
     setLoading(true);
+    setHunting(false);
     setError(null);
+    setVisibleCount(FILTER_PAGE_SIZE);
 
     try {
       const result = await fetchAccountHistory(node, address);
       if (id !== requestId.current) return;
 
-      applyHistoryResult(result.items);
+      applyFullList(result.items);
+      historyRef.current = result.items;
+      fromIdRef.current = result.fromId;
+      hasMoreRef.current = result.hasMore;
+      pagesLoadedRef.current = 1;
+      setFromId(result.fromId);
+      setHasMore(result.hasMore);
+      setPagesLoaded(1);
 
       if (options?.syncWallet && onRefresh) {
         await onRefresh();
@@ -169,22 +223,209 @@ const TransactionHistory: React.FC<Props> = ({
       const message = err.message || 'Node returned error – try backup node';
       setError(message);
       console.error('History fetch error:', err);
+      applyFullList([]);
+      historyRef.current = [];
+      fromIdRef.current = null;
+      hasMoreRef.current = false;
+      pagesLoadedRef.current = 0;
+      setFromId(null);
+      setHasMore(false);
+      setPagesLoaded(0);
     } finally {
       if (id === requestId.current) {
         setLoading(false);
       }
     }
-  }, [address, node, applyHistoryResult, onRefresh]);
+  }, [address, node, applyFullList, onRefresh]);
 
+  /**
+   * Append older pages (node cursor = fromId).
+   * Used for Show More and filter hunt when matches sit under rewards.
+   */
+  const loadOlderPages = useCallback(
+    async (opts: {
+      maxPages: number;
+      /** Stop early once this many filter matches exist (after merge). */
+      untilMatchCount?: number;
+      filter?: HistoryFilterId;
+    }): Promise<{
+      items: NormalizedHistoryTx[];
+      hasMore: boolean;
+      fromId: number | string | null;
+      pagesFetched: number;
+    }> => {
+      let more = hasMoreRef.current;
+      let pages = 0;
+      let acc = historyRef.current;
+      let nextFrom: number | string | null = fromIdRef.current;
+
+      // Nothing left to page
+      if (acc.length > 0 && (!more || nextFrom == null)) {
+        return { items: acc, hasMore: false, fromId: nextFrom, pagesFetched: 0 };
+      }
+
+      while (pages < opts.maxPages) {
+        const before: number | string =
+          acc.length === 0 || nextFrom == null ? 4294967295 : nextFrom;
+
+        // If we already have items, require a real cursor for the next page
+        if (acc.length > 0 && nextFrom == null) {
+          more = false;
+          break;
+        }
+
+        const result = await fetchAccountHistory(node, address, before);
+        pages += 1;
+        const beforeLen = acc.length;
+        acc = mergeHistory(acc, result.items);
+        nextFrom = result.fromId;
+        more = Boolean(result.hasMore && result.fromId);
+
+        if (opts.untilMatchCount != null && opts.filter && opts.filter !== 'all') {
+          const matches = acc.filter((tx) =>
+            matchesHistoryFilter(tx, opts.filter!, address),
+          ).length;
+          if (matches >= opts.untilMatchCount) break;
+        }
+
+        if (!result.hasMore || result.fromId == null) {
+          more = false;
+          break;
+        }
+        // No progress — stop
+        if (result.items.length === 0 || acc.length === beforeLen) {
+          more = false;
+          break;
+        }
+      }
+
+      return { items: acc, hasMore: more, fromId: nextFrom, pagesFetched: pages };
+    },
+    [address, node],
+  );
+
+  // Address/node change
   useEffect(() => {
-    // Drop DeFi-only filters when switching to mainnet
     setHistoryFilter('all');
-    if (address) fetchHistory();
-  }, [address, node]); // eslint-disable-line react-hooks/exhaustive-deps -- fetch on address/node only
+    if (address) void fetchHistory();
+  }, [address, node]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Reset page window when filter changes
   useEffect(() => {
-    setVisibleCount(7);
+    setVisibleCount(FILTER_PAGE_SIZE);
   }, [historyFilter]);
+
+  /**
+   * Filter hunt (wartbunker client scan): keep loading older history until we have
+   * enough matches for the UI, or exhaust hasMore / max pages.
+   * Fixes "no limit swaps" when swaps are buried under many rewards on page 1.
+   */
+  useEffect(() => {
+    if (!address || loading) return;
+    if (historyFilter === 'all') return;
+    if (hunting) return;
+
+    const need = visibleCount;
+    if (filteredHistory.length >= need) return;
+    if (!hasMore && pagesLoaded > 0) return;
+    if (pagesLoaded >= FILTER_HUNT_MAX_PAGES) return;
+    // Nothing loaded yet — wait for initial fetch
+    if (pagesLoaded === 0 && history.length === 0) return;
+
+    const gen = ++huntGen.current;
+    let cancelled = false;
+
+    (async () => {
+      setHunting(true);
+      try {
+        const remaining = Math.max(1, FILTER_HUNT_MAX_PAGES - pagesLoadedRef.current);
+        const result = await loadOlderPages({
+          maxPages: remaining,
+          untilMatchCount: need,
+          filter: historyFilter,
+        });
+        if (cancelled || gen !== huntGen.current) return;
+
+        applyFullList(result.items);
+        historyRef.current = result.items;
+        fromIdRef.current = result.fromId;
+        hasMoreRef.current = result.hasMore;
+        setFromId(result.fromId);
+        setHasMore(result.hasMore);
+        const nextPages = pagesLoadedRef.current + result.pagesFetched;
+        pagesLoadedRef.current = nextPages;
+        setPagesLoaded(nextPages);
+      } catch (err: any) {
+        if (cancelled || gen !== huntGen.current) return;
+        console.warn('Filter hunt failed:', err);
+        // Keep existing history; show soft status only
+      } finally {
+        if (!cancelled && gen === huntGen.current) {
+          setHunting(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- hunt when filter / match shortfall / pagination state changes
+  }, [
+    address,
+    historyFilter,
+    filteredHistory.length,
+    visibleCount,
+    hasMore,
+    pagesLoaded,
+    loading,
+    history.length,
+  ]);
+
+  const handleShowMore = useCallback(async () => {
+    const nextVisible = visibleCount + FILTER_PAGE_SIZE;
+    // Expand local window first
+    if (filteredHistory.length > visibleCount) {
+      setVisibleCount(nextVisible);
+      return;
+    }
+    // Need older pages (all filter or still hunting for more matches)
+    if (!hasMore || loading || hunting) {
+      setVisibleCount(nextVisible);
+      return;
+    }
+    setHunting(true);
+    try {
+      const result = await loadOlderPages({
+        maxPages: 5,
+        untilMatchCount:
+          historyFilter === 'all' ? undefined : nextVisible,
+        filter: historyFilter,
+      });
+      applyFullList(result.items);
+      historyRef.current = result.items;
+      fromIdRef.current = result.fromId;
+      hasMoreRef.current = result.hasMore;
+      setFromId(result.fromId);
+      setHasMore(result.hasMore);
+      const nextPages = pagesLoadedRef.current + result.pagesFetched;
+      pagesLoadedRef.current = nextPages;
+      setPagesLoaded(nextPages);
+      setVisibleCount(nextVisible);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to load more history');
+    } finally {
+      setHunting(false);
+    }
+  }, [
+    visibleCount,
+    filteredHistory.length,
+    hasMore,
+    loading,
+    hunting,
+    loadOlderPages,
+    historyFilter,
+    applyFullList,
+  ]);
 
   const copy = (text: string, label: string) => {
     Clipboard.setStringAsync(text);
@@ -192,6 +433,14 @@ const TransactionHistory: React.FC<Props> = ({
   };
 
   const showInitialLoader = loading && history.length === 0;
+  const filterBusy = hunting && historyFilter !== 'all';
+  const filterExhausted =
+    historyFilter !== 'all' &&
+    !hunting &&
+    !loading &&
+    filteredHistory.length === 0 &&
+    history.length > 0 &&
+    (!hasMore || pagesLoaded >= FILTER_HUNT_MAX_PAGES);
 
   return (
     <View style={styles.section}>
@@ -262,12 +511,17 @@ const TransactionHistory: React.FC<Props> = ({
           );
         })}
       </ScrollView>
-      {historyFilter !== 'all' && history.length > 0 ? (
+      {historyFilter !== 'all' && (history.length > 0 || filterBusy) ? (
         <Text style={styles.filterMeta}>
-          {filteredHistory.length} match{filteredHistory.length === 1 ? '' : 'es'}
-          {history.length !== filteredHistory.length
-            ? ` · of ${history.length} loaded`
-            : ''}
+          {filterBusy
+            ? `Scanning older history for ${
+                filters.find((f) => f.id === historyFilter)?.label || historyFilter
+              }…`
+            : `${filteredHistory.length} match${filteredHistory.length === 1 ? '' : 'es'}${
+                history.length !== filteredHistory.length
+                  ? ` · of ${history.length} loaded`
+                  : ''
+              }${hasMore ? ' · more available' : ''}`}
         </Text>
       ) : null}
 
@@ -275,17 +529,27 @@ const TransactionHistory: React.FC<Props> = ({
 
       {showTransactions && (
         <>
-          {loading && history.length > 0 ? (
+          {(loading && history.length > 0) || filterBusy ? (
             <View style={styles.refreshingRow}>
               <ActivityIndicator size="small" color={defiColors.goldHover} />
-              <Text style={styles.refreshingText}>Updating history…</Text>
+              <Text style={styles.refreshingText}>
+                {filterBusy
+                  ? 'Searching older transactions (like WartBunker)…'
+                  : 'Updating history…'}
+              </Text>
             </View>
           ) : null}
 
           {showInitialLoader ? (
             <ActivityIndicator size="large" color={defiColors.goldHover} style={{ margin: 30 }} />
-          ) : history.length === 0 ? (
+          ) : history.length === 0 && !loading ? (
             <Text style={styles.noTx}>{error ? 'Could not load transactions' : 'No transactions yet'}</Text>
+          ) : filteredHistory.length === 0 && filterBusy ? (
+            <Text style={styles.noTx}>Looking past recent rewards for matches…</Text>
+          ) : filteredHistory.length === 0 && filterExhausted ? (
+            <Text style={styles.noTx}>{filterEmptyMessage(historyFilter)}</Text>
+          ) : filteredHistory.length === 0 && historyFilter !== 'all' ? (
+            <Text style={styles.noTx}>Looking past recent rewards for matches…</Text>
           ) : filteredHistory.length === 0 ? (
             <Text style={styles.noTx}>{filterEmptyMessage(historyFilter)}</Text>
           ) : (
@@ -422,12 +686,17 @@ const TransactionHistory: React.FC<Props> = ({
             ))
           )}
 
-          {filteredHistory.length > visibleCount && !showInitialLoader ? (
+          {!showInitialLoader &&
+          (filteredHistory.length > visibleCount ||
+            (hasMore && !filterBusy && filteredHistory.length > 0)) ? (
             <TouchableOpacity
-              onPress={() => setVisibleCount(visibleCount + 7)}
+              onPress={() => void handleShowMore()}
               style={styles.showMoreBtn}
+              disabled={hunting || loading}
             >
-              <Text style={styles.showMoreText}>Show More</Text>
+              <Text style={styles.showMoreText}>
+                {hunting ? 'Loading…' : hasMore && filteredHistory.length <= visibleCount ? 'Load older…' : 'Show More'}
+              </Text>
             </TouchableOpacity>
           ) : null}
         </>
