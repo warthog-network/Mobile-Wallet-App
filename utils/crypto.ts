@@ -220,9 +220,31 @@ function decryptV2(envelope: { iter?: number; salt: string; iv: string; ct: stri
   return JSON.parse(decryptedStr);
 }
 
+export function normalizeImportedWallet(raw: unknown): WalletData {
+  const row = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const mnemonicSrc = row.mnemonic ?? row.seedPhrase ?? row.seed ?? row.phrase;
+  const mnemonic = Array.isArray(mnemonicSrc)
+    ? mnemonicSrc.filter(Boolean).join(' ')
+    : String(mnemonicSrc || '').trim();
+  return {
+    privateKey: String(row.privateKey || row.privateKeyHex || '')
+      .trim()
+      .replace(/^0x/i, ''),
+    publicKey: String(row.publicKey || row.publicKeyHex || '')
+      .trim()
+      .replace(/^0x/i, ''),
+    address: String(row.address || '')
+      .trim()
+      .replace(/^0x/i, ''),
+    mnemonic: mnemonic || undefined,
+    wordCount: typeof row.wordCount === 'number' ? row.wordCount : undefined,
+    pathType: row.pathType === 'normal' || row.pathType === 'hardened' ? row.pathType : undefined,
+  };
+}
+
 export const encryptWallet = async (walletData: WalletData, password: string): Promise<string> => {
   if (!password) throw new Error('Password is required');
-  return encryptV3(JSON.stringify(walletData), password);
+  return encryptV3(JSON.stringify(normalizeImportedWallet(walletData)), password);
 };
 
 export const decryptWallet = async (encrypted: string, password: string): Promise<WalletData> => {
@@ -240,9 +262,11 @@ export const decryptWallet = async (encrypted: string, password: string): Promis
         const envelope = JSON.parse(inner);
         if (envelope && envelope.ct && envelope.salt && envelope.iv) {
           if (Number(envelope.v) === 3 || envelope.alg === 'aes-256-gcm') {
-            return await decryptV3(envelope, password);
+            return normalizeImportedWallet(await decryptV3(envelope, password));
           }
-          if (Number(envelope.v) === 2) return decryptV2(envelope, password);
+          if (Number(envelope.v) === 2) {
+            return normalizeImportedWallet(decryptV2(envelope, password));
+          }
         }
       } catch (err: any) {
         if (err?.message && /Wrong password|Invalid password/i.test(err.message)) throw err;
@@ -252,7 +276,7 @@ export const decryptWallet = async (encrypted: string, password: string): Promis
     const bytes = CryptoJS.AES.decrypt(inner, password);
     const decrypted = bytes.toString(CryptoJS.enc.Utf8);
     if (!decrypted) throw new Error('Wrong password or invalid encrypted data');
-    return JSON.parse(decrypted);
+    return normalizeImportedWallet(JSON.parse(decrypted));
   } catch (e: any) {
     if (e?.message && !/JSON|Utf8|Malformed/i.test(e.message)) throw e;
     throw new Error('Wrong password or invalid encrypted data');

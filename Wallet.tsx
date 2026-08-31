@@ -221,12 +221,13 @@ const styles = StyleSheet.create({
   seed: {
     backgroundColor: defiColors.bgInset,
     padding: theme.spacing.md,
-    color: defiColors.textSecondary,
+    color: theme.colors.textPrimary,
     fontSize: theme.typography.bodySm,
+    lineHeight: 22,
     marginBottom: theme.spacing.md,
     borderRadius: theme.borderRadius.md,
     borderWidth: 1,
-    borderColor: defiColors.borderMuted,
+    borderColor: defiColors.goldHover,
   },
   key: {
     backgroundColor: defiColors.bgInset,
@@ -729,20 +730,17 @@ const Wallet: React.FC = () => {
 
     const existing = await storage.getItemAsync(SECURE_STORE_KEYS.wallet(name));
     const prevEnv = existing ? tryParseEnvelope(existing) : null;
-    let passwordCipher: string | null = pwd ? await encryptWallet(data, pwd) : null;
-    if (!passwordCipher && prevEnv?.password) passwordCipher = prevEnv.password;
-    if (!passwordCipher && existing && !prevEnv) passwordCipher = existing;
-
+    // Prompt biometrics first so the OS dialog is not stuck behind PBKDF2.
     if (withBio) {
       const { envelope } = await buildEnvelopeWithBiometrics(data, {
         displayName: name,
-        existingPasswordCipher: passwordCipher,
+        existingPasswordCipher: prevEnv?.password || (!prevEnv && existing ? existing : null),
         previousEnvelope: prevEnv,
-        require2fa: require2fa && Boolean(passwordCipher || pwd),
+        require2fa: false,
       });
-      if (require2fa && pwd) {
+      if (pwd) {
         envelope.password = await encryptWallet(data, pwd);
-        envelope.require2fa = true;
+        envelope.require2fa = require2fa;
       }
       return serializeEnvelope(envelope);
     }
@@ -803,6 +801,7 @@ const Wallet: React.FC = () => {
     if (!walletData) return setModalError('No wallet data available');
     try {
       setPasskeyBusy(true);
+      await new Promise<void>((resolve) => setTimeout(resolve, 80));
       const enc = await persistNamedWallet(walletData, walletName, password || null, {
         withBiometrics: wantBio,
         require2fa: require2faOnCreate,
@@ -1146,7 +1145,11 @@ const Wallet: React.FC = () => {
   };
 
   const beginNamedRestore = (data: WalletData, suggestedName: string) => {
-    setWalletData(data);
+    setWalletData({
+      ...data,
+      mnemonic: String(data.mnemonic || '').trim() || undefined,
+      privateKey: String(data.privateKey || '').replace(/^0x/i, ''),
+    });
     setWalletName(suggestedName);
     setWalletAction('import');
     setPassword('');
@@ -1930,12 +1933,20 @@ const Wallet: React.FC = () => {
                 {walletData?.mnemonic ? (
                   <>
                     <Text style={styles.label}>SEED PHRASE</Text>
-                    <Text style={styles.seed}>{walletData.mnemonic}</Text>
+                    <Text style={styles.seed} selectable>
+                      {walletData.mnemonic}
+                    </Text>
                   </>
-                ) : null}
+                ) : (
+                  <Text style={[styles.label, { color: '#fbbf24' }]}>
+                    This file did not include a seed phrase. Write down the private key — it is the backup for this wallet.
+                  </Text>
+                )}
                 <Text style={styles.label}>PRIVATE KEY</Text>
                 <TouchableOpacity onPress={() => copyToClipboard(walletData!.privateKey, 'Private Key')}>
-                  <Text style={styles.key}>{walletData?.privateKey}</Text>
+                  <Text style={styles.key} selectable>
+                    {walletData?.privateKey}
+                  </Text>
                 </TouchableOpacity>
                 {walletData?.address ? (
                   <>
@@ -1962,7 +1973,9 @@ const Wallet: React.FC = () => {
                     }}
                   />
                   <Text style={{ color: theme.colors.textSecondary, fontSize: 14 }}>
-                    I confirm I have written down my seed phrase before closing
+                    {walletData?.mnemonic
+                      ? 'I confirm I have written down my seed phrase before closing'
+                      : 'I confirm I have written down my private key before closing'}
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
@@ -1972,7 +1985,9 @@ const Wallet: React.FC = () => {
                 >
                   <Text style={styles.bigButtonPrimaryText}>
                     {passkeyBusy
-                      ? 'Waiting for passkey…'
+                      ? enableBioOnCreate
+                        ? 'Waiting for passkey…'
+                        : 'Saving…'
                       : enableBioOnCreate
                         ? 'Save & open (register passkey once)'
                         : 'Save & open wallet'}
