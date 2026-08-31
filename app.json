@@ -2,7 +2,7 @@
   "expo": {
     "name": "warthog-wallet",
     "slug": "warthog-wallet",
-    "version": "1.0.21",
+    "version": "1.0.22",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -15,7 +15,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.anonymous.warthogwallet",
-      "buildNumber": "22",
+      "buildNumber": "23",
       "infoPlist": {
         "NSCameraUsageDescription": "Camera access is used to scan Warthog address QR codes when sending funds."
       }
@@ -28,7 +28,7 @@
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "package": "com.anonymous.warthogwallet",
-      "versionCode": 22,
+      "versionCode": 23,
       "permissions": [
         "android.permission.CAMERA"
       ]
@@ -49,7 +49,8 @@
         {
           "cameraPermission": "Allow Warthog Wallet to access your camera to scan address QR codes."
         }
-      ]
+      ],
+      "react-native-quick-crypto"
     ]
   }
 }

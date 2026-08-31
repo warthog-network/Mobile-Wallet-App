@@ -49,7 +49,7 @@ import DexModal from './components/defi/DexModal';
 import ToolsModal from './components/tools/ToolsModal';
 import { defiStyles, defiColors } from './components/defi/defiStyles';
 import { Account, Address, Wart, NonceId, RoundedFee } from 'warthog-ts';
-import { generateWallet as generateWalletUtil, deriveWallet as deriveWalletUtil, importWallet as importWalletUtil, decryptWallet, encryptWallet, isValidAddress } from './utils/crypto';
+import { generateWallet as generateWalletUtil, deriveWallet as deriveWalletUtil, importWallet as importWalletUtil, decryptWallet, encryptWallet, isValidAddress, PBKDF2_ITERATIONS } from './utils/crypto';
 import {
   authBadgeForBlob,
   biometricsLabel,
@@ -309,6 +309,28 @@ const getPasswordStrength = (password: string) => {
   return { level: 4, label: 'Strong' };
 };
 
+/**
+ * Explain the wait rather than just spinning through it — the pause during
+ * 'Encrypting wallet…' is the password KDF doing the work that makes a stolen
+ * phone useless, and users read an unexplained freeze as the app hanging.
+ */
+// Grouped by hand rather than via toLocaleString: Intl is not guaranteed in
+// every Hermes build, and a throw here would take down the overlay.
+const PBKDF2_ROUNDS_LABEL = String(PBKDF2_ITERATIONS).replace(
+  /\B(?=(\d{3})+(?!\d))/g,
+  ',',
+);
+
+function savingHint(status: string): string {
+  if (status.startsWith('Encrypting')) {
+    return `Deriving your key with ${PBKDF2_ROUNDS_LABEL} rounds — this is what stops your seed being brute-forced if your phone is lost or stolen.`;
+  }
+  if (status.startsWith('Checking')) {
+    return 'Verifying against this wallet’s existing password.';
+  }
+  return 'Keep the app open until this finishes.';
+}
+
 function SavingOverlay({ visible, status }: { visible: boolean; status: string }) {
   if (!visible) return null;
   return (
@@ -345,9 +367,10 @@ function SavingOverlay({ visible, status }: { visible: boolean; status: string }
           marginTop: 8,
           textAlign: 'center',
           fontSize: 13,
+          lineHeight: 18,
         }}
       >
-        Keep the app open until this finishes.
+        {savingHint(status)}
       </Text>
     </View>
   );
@@ -757,11 +780,54 @@ const Wallet: React.FC = () => {
     }
   };
 
+  /**
+   * Turn a typed password into the cipher we store.
+   *
+   * When the typed password already opens the wallet's existing cipher we keep
+   * that cipher instead of deriving a new one: the result is equivalent, and
+   * the check proves the password is really this wallet's.
+   *
+   * Callers that are *confirming* an existing password rather than setting a
+   * new one (enabling 2FA) pass requireExisting, so a typo is rejected instead
+   * of silently becoming the new password — which, once 2FA needs both factors,
+   * would lock the wallet away for good.
+   */
+  const resolvePasswordCipher = async (
+    data: WalletData,
+    pwd: string,
+    prevCipher: string | null,
+    requireExisting: boolean,
+  ): Promise<string> => {
+    if (prevCipher) {
+      setSaveStatus('Checking password…');
+      let opened: WalletData | null = null;
+      try {
+        opened = await decryptWallet(prevCipher, pwd);
+      } catch {
+        opened = null;
+      }
+      if (opened) {
+        const a = String(opened.address || '').replace(/^0x/i, '').toLowerCase();
+        const b = String(data?.address || '').replace(/^0x/i, '').toLowerCase();
+        // Same password, same key — the stored cipher is already the right one.
+        // A mismatch means this name now holds a different wallet, so fall
+        // through and re-encrypt rather than keeping a cipher for the old key.
+        if (a && a === b) return prevCipher;
+      } else if (requireExisting) {
+        throw new Error(
+          'Wrong password for this wallet — enter its current password to enable 2FA',
+        );
+      }
+    }
+    setSaveStatus('Encrypting wallet…');
+    return encryptWallet(data, pwd);
+  };
+
   const persistNamedWallet = async (
     data: WalletData,
     name: string,
     pwd: string | null,
-    opts: { withBiometrics?: boolean; require2fa?: boolean },
+    opts: { withBiometrics?: boolean; require2fa?: boolean; requireExistingPassword?: boolean },
   ): Promise<string> => {
     const withBio = Boolean(opts.withBiometrics);
     const require2fa = Boolean(opts.require2fa);
@@ -775,32 +841,45 @@ const Wallet: React.FC = () => {
 
     const existing = await storage.getItemAsync(SECURE_STORE_KEYS.wallet(name));
     const prevEnv = existing ? tryParseEnvelope(existing) : null;
-    // Prompt biometrics first so the OS dialog is not stuck behind PBKDF2.
+    const prevCipher = prevEnv?.password || (!prevEnv && existing ? existing : null);
+
+    // Adding a passkey must not replace the stored password if the user typos.
+    // Password-only re-save can still change the password (opts.requireExistingPassword
+    // defaults false). Callers that are confirming an existing password pass true.
+    const requireExisting =
+      Boolean(opts.requireExistingPassword) ||
+      (Boolean(prevCipher) && withBio && Boolean(pwd));
+
+    // Settle the password before touching biometrics, so a bad password fails
+    // immediately instead of after the OS prompt has already interrupted the
+    // user. (This used to run last, to keep the prompt from queueing behind a
+    // multi-second PBKDF2; the native KDF makes that ordering unnecessary.)
+    const passwordCipher = pwd
+      ? await resolvePasswordCipher(data, pwd, prevCipher, requireExisting)
+      : null;
+
     if (withBio) {
       setSaveStatus('Confirm passkey on your device');
       const { envelope } = await buildEnvelopeWithBiometrics(data, {
         displayName: name,
-        existingPasswordCipher: prevEnv?.password || (!prevEnv && existing ? existing : null),
+        existingPasswordCipher: passwordCipher ?? prevCipher,
         previousEnvelope: prevEnv,
         require2fa: false,
       });
-      if (pwd) {
-        setSaveStatus('Encrypting wallet…');
-        envelope.password = await encryptWallet(data, pwd);
+      if (passwordCipher) {
+        envelope.password = passwordCipher;
         envelope.require2fa = require2fa;
       }
       return serializeEnvelope(envelope);
     }
 
-    if (pwd) {
-      setSaveStatus('Encrypting wallet…');
-      const cipher = await encryptWallet(data, pwd);
+    if (passwordCipher) {
       if (prevEnv?.passkey) {
         return serializeEnvelope(
-          envelopeWithPassword(data, cipher, prevEnv, { require2fa }),
+          envelopeWithPassword(data, passwordCipher, prevEnv, { require2fa }),
         );
       }
-      return cipher;
+      return passwordCipher;
     }
     throw new Error('Nothing to save');
   };
@@ -956,6 +1035,7 @@ const Wallet: React.FC = () => {
       const enc = await persistNamedWallet(requireSessionWallet(), tag, pwd, {
         withBiometrics: true,
         require2fa: want2fa,
+        requireExistingPassword: Boolean(pwd),
       });
       await storage.setItemAsync(SECURE_STORE_KEYS.wallet(tag), enc);
       if (!savedWalletNames.includes(tag)) {
@@ -2084,45 +2164,7 @@ const Wallet: React.FC = () => {
 
             {modalError && <Text style={styles.error}>{modalError}</Text>}
           </ScrollView>
-          {passkeyBusy ? (
-            <View
-              pointerEvents="auto"
-              style={{
-                position: 'absolute',
-                top: 0,
-                right: 0,
-                bottom: 0,
-                left: 0,
-                backgroundColor: 'rgba(9, 9, 11, 0.82)',
-                alignItems: 'center',
-                justifyContent: 'center',
-                paddingHorizontal: 24,
-              }}
-            >
-              <ActivityIndicator size="large" color={defiColors.goldHover} />
-              <Text
-                style={{
-                  color: theme.colors.textPrimary,
-                  marginTop: 16,
-                  textAlign: 'center',
-                  fontSize: 16,
-                  fontWeight: '600',
-                }}
-              >
-                {saveStatus}
-              </Text>
-              <Text
-                style={{
-                  color: theme.colors.textSecondary,
-                  marginTop: 8,
-                  textAlign: 'center',
-                  fontSize: 13,
-                }}
-              >
-                Keep the app open until this finishes.
-              </Text>
-            </View>
-          ) : null}
+          <SavingOverlay visible={passkeyBusy} status={saveStatus} />
         </View>
       </Modal>
 
@@ -2190,35 +2232,7 @@ const Wallet: React.FC = () => {
             <TouchableOpacity onPress={() => { setShowSaveModal(false); setModalError(null); setSaveWalletName(''); setSavePassword(''); setSaveConfirmPassword(''); setLogoutAfterSave(false); }} disabled={passkeyBusy}>
               <Text style={modalCloseStyle}>Close</Text>
             </TouchableOpacity>
-            {passkeyBusy ? (
-              <View
-                pointerEvents="auto"
-                style={{
-                  position: 'absolute',
-                  top: 0,
-                  right: 0,
-                  bottom: 0,
-                  left: 0,
-                  backgroundColor: 'rgba(9, 9, 11, 0.82)',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  paddingHorizontal: 24,
-                }}
-              >
-                <ActivityIndicator size="large" color={defiColors.goldHover} />
-                <Text
-                  style={{
-                    color: theme.colors.textPrimary,
-                    marginTop: 16,
-                    textAlign: 'center',
-                    fontSize: 16,
-                    fontWeight: '600',
-                  }}
-                >
-                  {saveStatus}
-                </Text>
-              </View>
-            ) : null}
+            <SavingOverlay visible={passkeyBusy} status={saveStatus} />
           </View>
         </View>
       </Modal>

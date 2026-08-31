@@ -255,26 +255,34 @@ async function encryptWithDeviceKey(plaintext: string, deviceKeyHex: string): Pr
 }> {
   const subtle = globalThis.crypto?.subtle;
   if (subtle) {
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const key = await subtle.importKey(
-      'raw',
-      hexToBytes(deviceKeyHex) as BufferSource,
-      'AES-GCM',
-      false,
-      ['encrypt'],
-    );
-    const ct = new Uint8Array(
-      await subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(plaintext)),
-    );
-    return {
-      ciphertext: JSON.stringify({
+    try {
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const key = await subtle.importKey(
+        'raw',
+        hexToBytes(deviceKeyHex) as BufferSource,
+        'AES-GCM',
+        false,
+        ['encrypt'],
+      );
+      const ct = new Uint8Array(
+        await subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(plaintext)),
+      );
+      const ciphertext = JSON.stringify({
         v: 3,
         alg: 'aes-256-gcm',
         iv: b64(iv),
         ct: b64(ct),
-      }),
-      mobileCrypto: 'aes-256-gcm',
-    };
+      });
+      // Verify before this is persisted. A wrap we cannot unwrap would strand
+      // the wallet behind a passkey that decrypts nothing, and the device key
+      // is the only copy — falling back to the CryptoJS wrap is recoverable.
+      if ((await decryptWithDeviceKey(ciphertext, deviceKeyHex, 'aes-256-gcm')) !== plaintext) {
+        throw new Error('AES-GCM round-trip mismatch');
+      }
+      return { ciphertext, mobileCrypto: 'aes-256-gcm' };
+    } catch {
+      /* fall through to the CryptoJS wrap below */
+    }
   }
   return {
     ciphertext: CryptoJS.AES.encrypt(plaintext, deviceKeyHex).toString(),

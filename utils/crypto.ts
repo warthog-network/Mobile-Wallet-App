@@ -3,14 +3,13 @@
 import { Buffer } from 'buffer';
 import * as ExpoCrypto from 'expo-crypto';
 import CryptoJS from 'crypto-js';
-import { pbkdf2 } from '@noble/hashes/pbkdf2';
-import { sha256 } from '@noble/hashes/sha2';
 import { ethers } from 'ethers';
 import { Account, Address } from 'warthog-ts';
 
 import { WalletData } from '../types';
 import { DERIVATION_PATHS, SATOSHI_MULTIPLIER } from '../constants';
 import { getPasswordCipherFromBlob } from './passkeyWallet';
+import { derivePbkdf2Key } from './pbkdf2';
 
 function accountToWalletData(
   account: Account,
@@ -117,7 +116,7 @@ export const importWallet = (privateKey: string): WalletData => {
 };
 
 export const WALLET_CRYPTO_VERSION = 3;
-const PBKDF2_ITERATIONS = 210_000;
+export const PBKDF2_ITERATIONS = 210_000;
 
 function b64(bytes: Uint8Array): string {
   let bin = '';
@@ -131,10 +130,6 @@ function unb64(s: string): Uint8Array {
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
-}
-
-function derivePbkdf2Key(password: string, salt: Uint8Array, iterations: number): Uint8Array {
-  return pbkdf2(sha256, password, salt, { c: iterations, dkLen: 32 });
 }
 
 function bytesToWordArray(bytes: Uint8Array): CryptoJS.lib.WordArray {
@@ -162,7 +157,7 @@ async function encryptV3(plaintext: string, password: string): Promise<string> {
       const ct = new Uint8Array(
         await subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(plaintext)),
       );
-      return JSON.stringify({
+      const envelope = {
         v: 3,
         kdf: 'pbkdf2-sha256',
         alg: 'aes-256-gcm',
@@ -170,7 +165,14 @@ async function encryptV3(plaintext: string, password: string): Promise<string> {
         salt: b64(salt),
         iv: b64(iv),
         ct: b64(ct),
-      });
+      };
+      // Never hand back a blob we cannot reopen. A partial WebCrypto
+      // implementation that encrypts but not decrypts would otherwise lock the
+      // wallet away; failing here just falls back to the CBC path below.
+      if ((await decryptGcm(envelope, keyBytes)) !== plaintext) {
+        throw new Error('AES-GCM round-trip mismatch');
+      }
+      return JSON.stringify(envelope);
     } catch {
       /* fall through to v2 CBC */
     }
@@ -178,10 +180,10 @@ async function encryptV3(plaintext: string, password: string): Promise<string> {
   return encryptV2WithKey(plaintext, keyBytes, salt);
 }
 
-async function decryptV3(envelope: { iter?: number; salt: string; iv: string; ct: string }, password: string): Promise<WalletData> {
-  const iterations = Number(envelope.iter) > 0 ? Number(envelope.iter) : PBKDF2_ITERATIONS;
-  const salt = unb64(envelope.salt);
-  const keyBytes = derivePbkdf2Key(password, salt, iterations);
+async function decryptGcm(
+  envelope: { iv: string; ct: string },
+  keyBytes: Uint8Array,
+): Promise<string> {
   const subtle = globalThis.crypto?.subtle;
   if (!subtle) throw new Error('Wrong password or invalid encrypted data');
   const key = await subtle.importKey(
@@ -196,7 +198,14 @@ async function decryptV3(envelope: { iter?: number; salt: string; iv: string; ct
     key,
     unb64(envelope.ct) as BufferSource,
   );
-  return JSON.parse(new TextDecoder().decode(pt));
+  return new TextDecoder().decode(pt);
+}
+
+async function decryptV3(envelope: { iter?: number; salt: string; iv: string; ct: string }, password: string): Promise<WalletData> {
+  const iterations = Number(envelope.iter) > 0 ? Number(envelope.iter) : PBKDF2_ITERATIONS;
+  const salt = unb64(envelope.salt);
+  const keyBytes = derivePbkdf2Key(password, salt, iterations);
+  return JSON.parse(await decryptGcm(envelope, keyBytes));
 }
 
 function encryptV2WithKey(plaintext: string, keyBytes: Uint8Array, salt: Uint8Array): string {
