@@ -309,6 +309,50 @@ const getPasswordStrength = (password: string) => {
   return { level: 4, label: 'Strong' };
 };
 
+function SavingOverlay({ visible, status }: { visible: boolean; status: string }) {
+  if (!visible) return null;
+  return (
+    <View
+      pointerEvents="auto"
+      style={{
+        position: 'absolute',
+        top: 0,
+        right: 0,
+        bottom: 0,
+        left: 0,
+        backgroundColor: 'rgba(9, 9, 11, 0.82)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 24,
+        zIndex: 50,
+      }}
+    >
+      <ActivityIndicator size="large" color={defiColors.goldHover} />
+      <Text
+        style={{
+          color: theme.colors.textPrimary,
+          marginTop: 16,
+          textAlign: 'center',
+          fontSize: 16,
+          fontWeight: '600',
+        }}
+      >
+        {status}
+      </Text>
+      <Text
+        style={{
+          color: theme.colors.textSecondary,
+          marginTop: 8,
+          textAlign: 'center',
+          fontSize: 13,
+        }}
+      >
+        Keep the app open until this finishes.
+      </Text>
+    </View>
+  );
+}
+
 const Wallet: React.FC = () => {
   const insets = useSafeAreaInsets();
 
@@ -1088,10 +1132,15 @@ const Wallet: React.FC = () => {
     }
     if (!password) return setError('Enter password');
     try {
+      setSaveStatus('Unlocking…');
+      setPasskeyBusy(true);
+      setError(null);
       const data = await decryptWallet(enc, password);
       activateLoggedInWallet(data, name);
     } catch (e: any) {
       setError('Wrong password: ' + e.message);
+    } finally {
+      setPasskeyBusy(false);
     }
   };
 
@@ -1109,14 +1158,17 @@ const Wallet: React.FC = () => {
       return setError('This wallet requires password + biometrics. Enter password, then unlock with 2FA.');
     }
     try {
+      setSaveStatus('Confirm passkey on your device');
       setPasskeyBusy(true);
       setError(null);
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
       let data: WalletData;
       if (info.require2fa || withPassword) {
         data = await unlockEnvelopeWith2fa(info.envelope!, password, decryptWallet);
       } else {
         data = await decryptWithBiometrics(info.envelope!.passkey!);
       }
+      setSaveStatus('Unlocking…');
       activateLoggedInWallet(data, name);
     } catch (e: any) {
       setError(e.message || 'Biometric unlock failed');
@@ -1344,6 +1396,7 @@ const Wallet: React.FC = () => {
   return (
     <View style={styles.container}>
       {!isLoggedIn ? (
+        <View style={{ flex: 1 }}>
         <ScrollView style={styles.loginSection} contentContainerStyle={{ paddingBottom: 40 }}>
           {showAccessBack ? (
             <TouchableOpacity onPress={() => goAccessPath(accessBackTarget)} disabled={creatingWallet || passkeyBusy}>
@@ -1508,7 +1561,7 @@ const Wallet: React.FC = () => {
                       >
                         <Text style={styles.bigButtonPrimaryText}>
                           {passkeyBusy
-                            ? 'Waiting…'
+                            ? saveStatus
                             : 'Unlock with password + passkey'}
                         </Text>
                       </TouchableOpacity>
@@ -1525,7 +1578,7 @@ const Wallet: React.FC = () => {
                         >
                           <Text style={styles.bigButtonPrimaryText}>
                             {passkeyBusy
-                              ? 'Waiting…'
+                              ? saveStatus
                               : 'Unlock with passkey'}
                           </Text>
                         </TouchableOpacity>
@@ -1546,7 +1599,9 @@ const Wallet: React.FC = () => {
                             disabled={passkeyBusy || !password}
                             onPress={() => void loadWallet(selectedWalletToLogin)}
                           >
-                            <Text style={styles.bigButtonText}>Unlock with password</Text>
+                            <Text style={styles.bigButtonText}>
+                              {passkeyBusy ? saveStatus : 'Unlock with password'}
+                            </Text>
                           </TouchableOpacity>
                         </>
                       )}
@@ -1738,6 +1793,8 @@ const Wallet: React.FC = () => {
 
           {error ? <Text style={styles.error}>{error}</Text> : null}
         </ScrollView>
+        <SavingOverlay visible={passkeyBusy} status={saveStatus} />
+        </View>
       ) : wallet ? (
         <>
           <DefiPageHeader

@@ -370,20 +370,15 @@ export async function decryptWithBiometrics(
       },
     );
   } catch {
-    // Legacy keys stored without Keystore user-auth binding.
-    deviceKey = await SecureStore.getItemAsync(
-      deviceKeyStoreId(passkeyBlock.credentialId),
-    );
-    if (deviceKey) {
-      await SecureStore.setItemAsync(
+    // Legacy keys stored without Keystore user-auth. Do not re-bind here —
+    // setItemAsync(requireAuthentication) after the prompt can stall ~60s.
+    try {
+      deviceKey = await SecureStore.getItemAsync(
         deviceKeyStoreId(passkeyBlock.credentialId),
-        deviceKey,
-        {
-          keychainService: 'warthog-wallet',
-          requireAuthentication: true,
-          authenticationPrompt: 'Unlock Warthog wallet',
-        },
+        { keychainService: 'warthog-wallet' },
       );
+    } catch {
+      deviceKey = null;
     }
   }
   if (!deviceKey) {
@@ -502,14 +497,14 @@ export async function unlockEnvelopeWith2fa(
   }
   if (!password) throw new Error('Password is required for 2FA unlock');
 
+  const fromBio = await decryptWithBiometrics(envelope.passkey);
+
   let fromPassword: WalletData;
   try {
     fromPassword = await decryptPasswordFn(envelope.password, password);
   } catch {
     throw new Error('Invalid password');
   }
-
-  const fromBio = await decryptWithBiometrics(envelope.passkey);
   const a = String(fromPassword?.address || '')
     .replace(/^0x/i, '')
     .toLowerCase();
