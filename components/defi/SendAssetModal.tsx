@@ -1,8 +1,10 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, Alert, StyleSheet, ActivityIndicator } from 'react-native';
-import { defiColors, defiStyles } from './defiStyles';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
+import { toast } from '../../utils/toast';
+import { defiStyles } from './defiStyles';
 import DefiModalShell from './DefiModalShell';
 import SpendableBalanceDisplay from '../SpendableBalanceDisplay';
+import SelectDropdown from '../SelectDropdown';
 import QrScannerModal from '../QrScannerModal';
 import {
   amountExceedsAvailable,
@@ -14,7 +16,7 @@ import { isValidAddress } from '../../utils/crypto';
 import { fetchAssetBalanceForAddress } from '../../utils/defiApi';
 import { submitAssetTransfer } from '../../utils/defiSubmit';
 import { DEFAULT_FEE } from '../../constants';
-import type { AssetPrefill, WalletData } from '../../types';
+import type { AssetBalance, AssetPrefill, WalletData } from '../../types';
 import { theme } from '../../theme';
 
 type Spendable = {
@@ -30,6 +32,7 @@ interface Props {
   wallet: WalletData;
   selectedNode: string;
   nextNonce: number;
+  assets?: AssetBalance[];
   prefill: AssetPrefill | null;
   onPrefillConsumed: () => void;
   onSuccess: (nonce: number) => Promise<void>;
@@ -41,6 +44,7 @@ const SendAssetModal: React.FC<Props> = ({
   wallet,
   selectedNode,
   nextNonce,
+  assets = [],
   prefill,
   onPrefillConsumed,
   onSuccess,
@@ -58,28 +62,40 @@ const SendAssetModal: React.FC<Props> = ({
   const [recipient, setRecipient] = useState('');
   const [amount, setAmount] = useState('');
   const [fee, setFee] = useState(DEFAULT_FEE);
-  const [isLiquidity, setIsLiquidity] = useState(false);
-  const [manualNonce, setManualNonce] = useState('');
   const [sending, setSending] = useState(false);
   const [showQrScanner, setShowQrScanner] = useState(false);
 
-  useEffect(() => {
-    if (!prefill) return;
-    setAssetHash(prefill.hash || '');
-    setAssetName(prefill.name || '');
-    setDecimals(String(prefill.decimals ?? 8));
-    const available = prefill.available ?? prefill.balance ?? '';
-    const locked = prefill.locked ?? '0';
-    const total = prefill.total ?? prefill.balance ?? available;
+  const applyAsset = useCallback((asset: {
+    hash: string;
+    name?: string;
+    decimals?: number;
+    available?: string;
+    locked?: string;
+    total?: string;
+    balance?: string;
+    hasLocked?: boolean;
+  }) => {
+    const hash = normalizeAssetHash(asset.hash);
+    setAssetHash(hash);
+    setAssetName(asset.name || '');
+    setDecimals(String(asset.decimals ?? 8));
+    const available = asset.available ?? asset.balance ?? '';
+    const locked = asset.locked ?? '0';
+    const total = asset.total ?? asset.balance ?? available;
     setSpendable({
       available,
       locked,
       total,
-      hasLocked: parseFloat(locked || '0') > 0,
+      hasLocked: Boolean(asset.hasLocked) || parseFloat(locked || '0') > 0,
     });
     setAmount('');
+  }, []);
+
+  useEffect(() => {
+    if (!prefill) return;
+    applyAsset(prefill);
     onPrefillConsumed();
-  }, [prefill, onPrefillConsumed]);
+  }, [prefill, onPrefillConsumed, applyAsset]);
 
   const loadAssetBalance = useCallback(
     async (hashRaw: string, { silent = false } = {}): Promise<Spendable | null> => {
@@ -106,7 +122,7 @@ const SendAssetModal: React.FC<Props> = ({
         setDecimals(String(bal.decimals));
         return next;
       } catch (err: any) {
-        if (!silent) Alert.alert('Balance', err.message || 'Could not load asset balance');
+        if (!silent) toast.error('Balance', err.message || 'Could not load asset balance');
         return null;
       } finally {
         if (!silent) setBalanceLoading(false);
@@ -115,7 +131,6 @@ const SendAssetModal: React.FC<Props> = ({
     [wallet?.address, selectedNode, assetName]
   );
 
-  // Live refresh when hash is complete
   useEffect(() => {
     if (!visible) return;
     const hash = normalizeAssetHash(assetHash);
@@ -126,33 +141,54 @@ const SendAssetModal: React.FC<Props> = ({
     return () => clearTimeout(t);
   }, [visible, assetHash, wallet?.address, selectedNode, loadAssetBalance]);
 
+  const assetOptions = useMemo(() => {
+    const opts = assets.map((a) => ({ id: a.hash, label: a.name || a.hash.slice(0, 8) }));
+    if (
+      assetHash &&
+      !assets.some((a) => a.hash.toLowerCase() === assetHash.toLowerCase())
+    ) {
+      opts.unshift({ id: assetHash, label: assetName || 'Selected asset' });
+    }
+    return opts;
+  }, [assets, assetHash, assetName]);
+
   const freeBalance = spendable.available || spendable.total || '';
 
-  const handleMaxAmount = () => {
-    if (freeBalance && freeBalance !== '0') {
-      setAmount(freeBalance);
+  const handlePickAsset = (hash: string) => {
+    const match = assets.find((a) => a.hash.toLowerCase() === hash.toLowerCase());
+    if (match) {
+      applyAsset({
+        hash: match.hash,
+        name: match.name,
+        decimals: match.decimals,
+        available: match.available,
+        locked: match.locked,
+        total: match.balance,
+        balance: match.balance,
+        hasLocked: match.hasLocked,
+      });
+      return;
     }
+    setAssetHash(hash);
   };
 
   const handleSend = async () => {
     if (!assetHash || !recipient || !amount) {
-      Alert.alert('Missing fields', 'Asset hash, recipient, and amount are required');
+      toast.error('Missing fields', 'Asset, recipient, and amount are required');
       return;
     }
     if (!isValidAssetHash(assetHash)) {
-      Alert.alert('Invalid hash', 'Asset hash must be 64 hex characters');
+      toast.error('Invalid asset', 'Select a tracked token first');
       return;
     }
     if (!isValidAddress(recipient.trim())) {
-      Alert.alert('Invalid address', 'Recipient must be a valid 48-char address');
+      toast.error('Invalid address', 'Recipient must be a valid 48-char address');
       return;
     }
 
     const amountStr = amount.trim();
-    const nonceId = manualNonce ? parseInt(manualNonce, 10) : nextNonce;
     setSending(true);
     try {
-      // Live free-balance check — locked tokens cannot be transferred
       const live = (await loadAssetBalance(assetHash, { silent: true })) || spendable;
       if (live?.available != null && amountExceedsAvailable(amountStr, live.available)) {
         const unit = assetName || 'tokens';
@@ -162,26 +198,25 @@ const SendAssetModal: React.FC<Props> = ({
           unit,
         });
         setAmount(live.available);
-        Alert.alert('Insufficient free balance', msg);
+        toast.error('Insufficient free balance', msg);
         return;
       }
 
       const result = await submitAssetTransfer({
         node: selectedNode,
         wallet,
-        nonceId,
+        nonceId: nextNonce,
         fee,
         assetHash,
         toAddress: recipient,
         amount: amountStr,
         decimals: parseInt(decimals, 10) || 8,
-        isLiquidity,
+        isLiquidity: false,
       });
       await onSuccess(result.nonce + 1);
-      Alert.alert('Sent', `Tx: ${result.txHash.slice(0, 20)}…`);
+      toast.success('Sent', `Tx ${result.txHash.slice(0, 20)}…`);
       setRecipient('');
       setAmount('');
-      setManualNonce('');
       loadAssetBalance(assetHash, { silent: true });
       onClose();
     } catch (e: any) {
@@ -193,7 +228,7 @@ const SendAssetModal: React.FC<Props> = ({
           unit: assetName || 'tokens',
         });
       }
-      Alert.alert('Transfer failed', message);
+      toast.error('Transfer failed', message);
     } finally {
       setSending(false);
     }
@@ -201,80 +236,89 @@ const SendAssetModal: React.FC<Props> = ({
 
   return (
     <>
-    <DefiModalShell
-      visible={visible}
-      onClose={onClose}
-      title="Send Asset"
-      subtitle={assetName ? `Transferring ${assetName}` : 'Send tokens or LP shares on the DeFi testnet'}
-    >
-          {assetName ? <Text style={defiStyles.label}>Asset: {assetName}</Text> : null}
-          <Text style={defiStyles.label}>Asset Hash (64 hex)</Text>
-          <TextInput style={defiStyles.input} value={assetHash} onChangeText={setAssetHash} placeholderTextColor={theme.colors.textMuted} autoCapitalize="none" />
+      <DefiModalShell visible={visible} onClose={onClose} title="Send Asset">
+        <Text style={defiStyles.label}>Asset</Text>
+        <SelectDropdown
+          value={assetHash}
+          options={assetOptions}
+          onChange={handlePickAsset}
+          placeholder="Select token"
+          accessibilityLabel="Asset"
+          style={{ marginBottom: theme.spacing.md }}
+        />
+        {assets.length === 0 && !assetHash ? (
+          <Text style={[defiStyles.hintText, { textAlign: 'left', marginTop: 0 }]}>
+            Track a token on Overview or Search first.
+          </Text>
+        ) : null}
 
-          {balanceLoading ? (
-            <ActivityIndicator color={theme.colors.primary} style={{ marginBottom: theme.spacing.sm }} />
-          ) : freeBalance ? (
-            <SpendableBalanceDisplay
-              available={spendable.available || freeBalance}
-              locked={spendable.locked}
-              total={spendable.total || freeBalance}
-              unit={assetName || 'tokens'}
-              label="Available balance"
-              layout="stack"
-            />
-          ) : null}
-
-          <Text style={defiStyles.label}>Recipient Address</Text>
-          <View style={localStyles.addressRow}>
-            <TextInput
-              style={[defiStyles.input, localStyles.addressInput]}
-              value={recipient}
-              onChangeText={setRecipient}
-              placeholderTextColor={theme.colors.textMuted}
-              autoCapitalize="none"
-            />
-            <TouchableOpacity style={localStyles.scanBtn} onPress={() => setShowQrScanner(true)}>
-              <Text style={localStyles.scanBtnText}>📷</Text>
-            </TouchableOpacity>
-          </View>
-          <Text style={defiStyles.label}>Amount</Text>
-          <TextInput style={defiStyles.input} value={amount} onChangeText={setAmount} keyboardType="decimal-pad" placeholderTextColor={theme.colors.textMuted} />
-          {freeBalance ? (
-            <TouchableOpacity style={[defiStyles.btn, defiStyles.btnSecondary]} onPress={handleMaxAmount}>
-              <Text style={defiStyles.btnTextSecondary}>Use available</Text>
-            </TouchableOpacity>
-          ) : null}
-          <Text style={defiStyles.label}>Decimals</Text>
-          <TextInput style={defiStyles.input} value={decimals} onChangeText={setDecimals} keyboardType="number-pad" placeholderTextColor={theme.colors.textMuted} />
-          <TouchableOpacity
-            style={[defiStyles.row, { marginBottom: theme.spacing.sm }]}
-            onPress={() => setIsLiquidity(!isLiquidity)}
-          >
-            <View style={{
-              width: 20,
-              height: 20,
-              borderWidth: 1,
-              borderColor: defiColors.border,
-              borderRadius: 4,
-              backgroundColor: isLiquidity ? defiColors.goldHover : 'transparent',
-              marginRight: 8,
-            }} />
-            <Text style={{ color: defiColors.textSecondary }}>Transfer LP shares (liquidity)</Text>
+        <Text style={defiStyles.label}>To</Text>
+        <View style={localStyles.addressRow}>
+          <TextInput
+            style={[defiStyles.input, localStyles.addressInput]}
+            value={recipient}
+            onChangeText={setRecipient}
+            placeholder="Enter public address"
+            placeholderTextColor={theme.colors.textMuted}
+            autoCapitalize="none"
+          />
+          <TouchableOpacity style={localStyles.scanBtn} onPress={() => setShowQrScanner(true)}>
+            <Text style={localStyles.scanBtnText}>📷</Text>
           </TouchableOpacity>
-          <Text style={defiStyles.label}>Fee (WART)</Text>
-          <TextInput style={defiStyles.input} value={fee} onChangeText={setFee} keyboardType="decimal-pad" placeholderTextColor={theme.colors.textMuted} />
-          <Text style={defiStyles.label}>Nonce (auto: {nextNonce})</Text>
-          <TextInput style={defiStyles.input} value={manualNonce} onChangeText={setManualNonce} keyboardType="number-pad" placeholder="Optional" placeholderTextColor={theme.colors.textMuted} />
-          <TouchableOpacity style={defiStyles.btn} onPress={handleSend} disabled={sending}>
-            <Text style={defiStyles.btnText}>{sending ? 'Sending…' : 'Send Asset'}</Text>
-          </TouchableOpacity>
-    </DefiModalShell>
+        </View>
 
-    <QrScannerModal
-      visible={showQrScanner}
-      onClose={() => setShowQrScanner(false)}
-      onScan={setRecipient}
-    />
+        {balanceLoading ? (
+          <ActivityIndicator color={theme.colors.primary} style={{ marginBottom: theme.spacing.sm }} />
+        ) : freeBalance ? (
+          <SpendableBalanceDisplay
+            available={spendable.available || freeBalance}
+            locked={spendable.locked}
+            total={spendable.total || freeBalance}
+            unit={assetName || undefined}
+            label="Available"
+            layout="stack"
+          />
+        ) : null}
+
+        <Text style={defiStyles.label}>Amount</Text>
+        <View style={localStyles.addressRow}>
+          <TextInput
+            style={[defiStyles.input, localStyles.addressInput]}
+            value={amount}
+            onChangeText={setAmount}
+            keyboardType="decimal-pad"
+            placeholder="0"
+            placeholderTextColor={theme.colors.textMuted}
+          />
+          {freeBalance && freeBalance !== '—' ? (
+            <TouchableOpacity
+              style={localStyles.scanBtn}
+              onPress={() => setAmount(freeBalance)}
+            >
+              <Text style={localStyles.maxText}>Max</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+
+        <Text style={defiStyles.label}>Fee (WART)</Text>
+        <TextInput
+          style={defiStyles.input}
+          value={fee}
+          onChangeText={setFee}
+          keyboardType="decimal-pad"
+          placeholder={DEFAULT_FEE}
+          placeholderTextColor={theme.colors.textMuted}
+        />
+        <TouchableOpacity style={defiStyles.btn} onPress={handleSend} disabled={sending}>
+          <Text style={defiStyles.btnText}>{sending ? 'Sending…' : 'Send Asset'}</Text>
+        </TouchableOpacity>
+      </DefiModalShell>
+
+      <QrScannerModal
+        visible={showQrScanner}
+        onClose={() => setShowQrScanner(false)}
+        onScan={setRecipient}
+      />
     </>
   );
 };
@@ -291,7 +335,8 @@ const localStyles = StyleSheet.create({
     marginBottom: 0,
   },
   scanBtn: {
-    width: 50,
+    minWidth: 50,
+    paddingHorizontal: 10,
     borderRadius: theme.borderRadius.sm,
     justifyContent: 'center',
     alignItems: 'center',
@@ -301,6 +346,11 @@ const localStyles = StyleSheet.create({
   },
   scanBtnText: {
     fontSize: 20,
+  },
+  maxText: {
+    color: theme.colors.textSecondary,
+    fontSize: theme.typography.tiny,
+    fontWeight: theme.typography.semiBold,
   },
 });
 

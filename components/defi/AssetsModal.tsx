@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { toast } from '../../utils/toast';
 import * as Clipboard from 'expo-clipboard';
 import { defiStyles } from './defiStyles';
 import DefiModalShell from './DefiModalShell';
@@ -9,6 +10,7 @@ import { submitAssetCreation } from '../../utils/defiSubmit';
 import { DEFAULT_FEE } from '../../constants';
 import type { WalletData } from '../../types';
 import { theme } from '../../theme';
+import AssetMark, { AssetTitle } from './AssetMark';
 
 interface Props {
   visible: boolean;
@@ -31,7 +33,7 @@ const AssetsModal: React.FC<Props> = ({
   onSuccess,
   onTrackAsset,
 }) => {
-  const [tab, setTab] = useState<'create' | 'search'>('create');
+  const [tab, setTab] = useState<'create' | 'search'>('search');
   const [name, setName] = useState('');
   const [supply, setSupply] = useState('');
   const [decimals, setDecimals] = useState('8');
@@ -49,22 +51,22 @@ const AssetsModal: React.FC<Props> = ({
   const copyHash = (hash: string, label = 'Asset hash') => {
     if (!hash) return;
     Clipboard.setStringAsync(hash);
-    Alert.alert('Copied', `${label} copied to clipboard`);
+    toast.success('Copied', `${label} copied to clipboard`);
   };
 
   const handleCreate = async () => {
     const assetName = name.trim().toUpperCase();
     if (!assetName || assetName.length > 5) {
-      Alert.alert('Invalid name', 'Asset name must be 1-5 characters');
+      toast.error('Invalid name', 'Asset name must be 1-5 characters');
       return;
     }
     if (!supply || parseFloat(supply) <= 0) {
-      Alert.alert('Invalid supply', 'Enter a valid total supply');
+      toast.error('Invalid supply', 'Enter a valid total supply');
       return;
     }
     const decimalsNum = parseInt(decimals.trim(), 10);
     if (!Number.isFinite(decimalsNum) || decimalsNum < 0 || decimalsNum > 18) {
-      Alert.alert('Invalid decimals', 'Enter a whole number from 0 to 18 (no encoding needed)');
+      toast.error('Invalid decimals', 'Enter a whole number from 0 to 18');
       return;
     }
     setLoading(true);
@@ -79,12 +81,12 @@ const AssetsModal: React.FC<Props> = ({
         decimals: decimalsNum,
       });
       await onSuccess(result.nonce + 1);
-      Alert.alert('Submitted', `Asset creation tx: ${result.txHash}`);
+      toast.success('Submitted', `Asset creation tx: ${result.txHash.slice(0, 20)}…`);
       copyHash(result.txHash, 'Transaction hash');
       setName('');
       setSupply('');
     } catch (e: any) {
-      Alert.alert('Failed', e.message);
+      toast.error('Failed', e.message);
     } finally {
       setLoading(false);
     }
@@ -95,7 +97,7 @@ const AssetsModal: React.FC<Props> = ({
     const hashPrefix = searchHash.trim().replace(/^0x/i, '');
 
     if (searchMode === 'hashMatch' && !hashPrefix) {
-      Alert.alert('Enter hash prefix', 'Provide a hash prefix to search');
+      toast.error('Enter hash prefix', 'Provide a hash prefix to search');
       return;
     }
 
@@ -113,7 +115,7 @@ const AssetsModal: React.FC<Props> = ({
       setSearchMeta({ namePrefix: data.namePrefix, hashPrefix: data.hashPrefix });
       setSearched(true);
     } catch (e: any) {
-      Alert.alert('Search failed', e.message);
+      toast.error('Search failed', e.message);
     } finally {
       setLoading(false);
     }
@@ -122,7 +124,7 @@ const AssetsModal: React.FC<Props> = ({
   const handleLookup = async () => {
     const clean = lookupHash.trim().replace(/^0x/i, '').toLowerCase();
     if (!isValidAssetHash(clean)) {
-      Alert.alert('Invalid hash', 'Enter a 64-character hex hash');
+      toast.error('Invalid hash', 'Enter a 64-character hex hash');
       return;
     }
     setLoading(true);
@@ -131,7 +133,7 @@ const AssetsModal: React.FC<Props> = ({
       const data = await lookupAssetInfo(selectedNode, clean);
       setLookupResult(data as AssetInfo);
     } catch (e: any) {
-      Alert.alert('Lookup failed', e.message);
+      toast.error('Lookup failed', e.message);
     } finally {
       setLoading(false);
     }
@@ -145,8 +147,13 @@ const AssetsModal: React.FC<Props> = ({
     return (
       <View key={key} style={defiStyles.card}>
         <View style={defiStyles.row}>
-          <View style={{ flex: 1 }}>
-            <Text style={defiStyles.cardTitle}>{assetName}</Text>
+          {hash ? <AssetMark hash={hash} name={assetName} /> : null}
+          <View style={{ flex: 1, marginLeft: hash ? theme.spacing.sm : 0 }}>
+            {hash ? (
+              <AssetTitle hash={hash} name={assetName} style={defiStyles.cardTitle} />
+            ) : (
+              <Text style={defiStyles.cardTitle}>{assetName}</Text>
+            )}
             <Text style={defiStyles.cardSub}>ID {asset.id} • {asset.decimals} decimals</Text>
           </View>
           {hash ? (
@@ -172,9 +179,9 @@ const AssetsModal: React.FC<Props> = ({
                 onPress={async () => {
                   try {
                     await onTrackAsset(hash, assetName);
-                    Alert.alert('Tracked', `${assetName} added to wallet`);
+                    toast.success('Tracked', `${assetName} added to wallet`);
                   } catch (e: any) {
-                    Alert.alert('Failed', e.message);
+                    toast.error('Failed', e.message);
                   }
                 }}
               >
@@ -219,10 +226,10 @@ const AssetsModal: React.FC<Props> = ({
       visible={visible}
       onClose={onClose}
       title="Asset Tools"
-      subtitle="Create, search, and look up assets on the DeFi testnet"
+      subtitle="Search, look up, and create assets on the DeFi testnet"
     >
           <View style={defiStyles.tabRow}>
-            {(['create', 'search'] as const).map((t) => (
+            {(['search', 'create'] as const).map((t) => (
               <TouchableOpacity key={t} style={[defiStyles.tab, tab === t && defiStyles.tabActive]} onPress={() => setTab(t)}>
                 <Text style={[defiStyles.tabText, tab === t && defiStyles.tabTextActive]}>
                   {t === 'create' ? 'Create Asset' : 'Search & Lookup'}

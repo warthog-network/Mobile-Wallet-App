@@ -67,6 +67,7 @@ import {
   insufficientFreeBalanceMessage,
 } from './utils/warthogFormat';
 import SpendableBalanceDisplay from './components/SpendableBalanceDisplay';
+import { toast } from './utils/toast';
 import { theme } from './theme';
 
 const styles = StyleSheet.create({
@@ -333,7 +334,6 @@ const Wallet: React.FC = () => {
   const [showWalletOptionsModal, setShowWalletOptionsModal] = useState(false);
   const [showSendAssetModal, setShowSendAssetModal] = useState(false);
   const [showAssetsModal, setShowAssetsModal] = useState(false);
-  const [showDexModal, setShowDexModal] = useState(false);
   const [showToolsModal, setShowToolsModal] = useState(false);
   const [showQrScanner, setShowQrScanner] = useState(false);
   const [showWalletQrScanner, setShowWalletQrScanner] = useState(false);
@@ -347,7 +347,6 @@ const Wallet: React.FC = () => {
     if (showSendAssetModal) return 'send-asset';
     if (showHistoryModal) return 'history';
     if (showAssetsModal) return 'assets';
-    if (showDexModal) return 'dex';
     if (showContactsModal) return 'contacts';
     if (showWalletOptionsModal) return 'options';
     if (showToolsModal) return 'tools';
@@ -357,7 +356,6 @@ const Wallet: React.FC = () => {
     showSendAssetModal,
     showHistoryModal,
     showAssetsModal,
-    showDexModal,
     showContactsModal,
     showWalletOptionsModal,
     showToolsModal,
@@ -378,10 +376,7 @@ const Wallet: React.FC = () => {
         : []),
       { id: 'history', label: 'History', onPress: () => setShowHistoryModal(true) },
       ...(isDefi
-        ? [
-            { id: 'assets', label: 'Assets', onPress: () => setShowAssetsModal(true) },
-            { id: 'dex', label: 'DEX', onPress: () => setShowDexModal(true) },
-          ]
+        ? [{ id: 'assets', label: 'Assets', onPress: () => setShowAssetsModal(true) }]
         : []),
       { id: 'contacts', label: 'Contacts', onPress: () => setShowContactsModal(true) },
       { id: 'tools', label: 'Tools', onPress: () => setShowToolsModal(true) },
@@ -494,12 +489,12 @@ const Wallet: React.FC = () => {
     setCurrentWalletName('');
     setIsLoggedIn(false);
     setSentTxLog([]);
-    Alert.alert('Logged Out', 'Your wallet is saved securely on this device.');
+    toast.info('Logged out', 'Your wallet is saved securely on this device.');
   };
 
   const handleClearWallet = () => {
     if (!currentWalletName) {
-      Alert.alert('No Wallet Selected', 'No wallet is currently selected to delete.');
+      toast.error('No wallet selected', 'No wallet is currently selected to delete.');
       return;
     }
     Alert.alert(
@@ -521,9 +516,9 @@ const Wallet: React.FC = () => {
               setIsLoggedIn(false);
               setSentTxLog([]);
               setNextNonce(0);
-              Alert.alert('Wallet Cleared', `Wallet "${currentWalletName}" has been deleted.`);
+              toast.success('Wallet cleared', `Wallet "${currentWalletName}" has been deleted.`);
             } catch (e) {
-              Alert.alert('Error', 'Failed to delete wallet data');
+              toast.error('Error', 'Failed to delete wallet data');
             }
           },
         },
@@ -677,7 +672,7 @@ const Wallet: React.FC = () => {
       setSecureStep('save'); // unlock options first (wartbunker), then seed backup
       setShowModal(true);
     } catch (e: any) {
-      Alert.alert('Wallet Creation Failed', e.message);
+      toast.error('Wallet creation failed', e.message);
     } finally {
       setCreatingWallet(false);
     }
@@ -798,7 +793,7 @@ const Wallet: React.FC = () => {
       setSaveWalletConsent(false);
       setSecureStep('save');
       const badge = authBadgeForBlob(enc);
-      Alert.alert('✅ Wallet Saved Securely!', badge);
+      toast.success('Wallet saved', badge);
     } catch (e: any) {
       setModalError('Failed to save wallet: ' + e.message);
     } finally {
@@ -821,7 +816,7 @@ const Wallet: React.FC = () => {
     setConsentToClose(false);
     setSaveWalletConsent(false);
     setSecureStep('save');
-    Alert.alert('Wallet open', 'Session only — not saved for next login');
+    toast.info('Wallet open', 'Session only — not saved for next login');
   };
 
   const saveCurrentWallet = async () => {
@@ -855,7 +850,7 @@ const Wallet: React.FC = () => {
       setSaveWalletName('');
       setSavePassword('');
       setSaveConfirmPassword('');
-      Alert.alert('✅ Wallet Saved Securely!', authBadgeForBlob(enc));
+      toast.success('Wallet saved', authBadgeForBlob(enc));
       if (logoutAfterSave) {
         setLogoutAfterSave(false);
         performLogout();
@@ -872,7 +867,7 @@ const Wallet: React.FC = () => {
     password?: string | null;
   }) => {
     if (!wallet) {
-      Alert.alert('Unlock first', 'Open your wallet, then enable biometrics.');
+      toast.error('Unlock first', 'Open your wallet, then enable biometrics.');
       throw new Error('Wallet locked');
     }
     const tag = (currentWalletName || saveWalletName || 'Main').trim() || 'Main';
@@ -891,14 +886,14 @@ const Wallet: React.FC = () => {
         await storage.setItemAsync(SECURE_STORE_KEYS.walletNames, JSON.stringify(updatedNames));
       }
       setCurrentWalletName(tag);
-      Alert.alert(
-        want2fa ? '✅ 2FA enabled' : '✅ Passkey enabled',
+      toast.success(
+        want2fa ? '2FA enabled' : 'Passkey enabled',
         want2fa
           ? `Next login: password + passkey for “${tag}”`
           : `Next login: Unlock with passkey for “${tag}”`,
       );
     } catch (e: any) {
-      Alert.alert('Failed', e.message || 'Could not enable biometrics');
+      toast.error('Failed', e.message || 'Could not enable biometrics');
       throw e;
     } finally {
       setPasskeyBusy(false);
@@ -982,7 +977,7 @@ const Wallet: React.FC = () => {
       
       setShowDownloadModal(false);
       setDownloadPassword('');
-      Alert.alert('✅ Downloaded!');
+      toast.success('Downloaded');
     } catch (e: any) {
       setModalError('Failed to download: ' + e.message);
     }
@@ -1016,7 +1011,7 @@ const Wallet: React.FC = () => {
       setWalletName('');
       setPassword('');
       setConfirmPassword('');
-      Alert.alert('✅ Downloaded!');
+      toast.success('Downloaded');
     } catch (e: any) {
       setModalError('Failed to download: ' + e.message);
     }
@@ -1111,7 +1106,7 @@ const Wallet: React.FC = () => {
       
       setUploadedFileContent(content);
       setUploadedFileName(result.assets[0].name || 'Selected file');
-      Alert.alert('File Loaded', 'Enter password below to decrypt');
+      toast.info('File loaded', 'Enter password below to decrypt');
     } catch (e: any) {
       setError('Failed to read file: ' + e.message);
     }
@@ -1126,7 +1121,7 @@ const Wallet: React.FC = () => {
       fetchBalanceAndNonce(data.address);
       setUploadedFileContent(null);
       setPassword('');
-      Alert.alert('✅ Logged in from file!');
+      toast.success('Logged in from file');
     } catch (e: any) {
       setError('Wrong password or invalid file: ' + e.message);
     }
@@ -1141,7 +1136,7 @@ const Wallet: React.FC = () => {
       fetchBalanceAndNonce(data.address);
       setScannedWalletPayload(null);
       setPassword('');
-      Alert.alert('Imported', 'Wallet loaded from QR — consider saving it to this device.');
+      toast.success('Imported', 'Wallet loaded from QR — consider saving it to this device.');
     } catch (e: any) {
       setError('Wrong password or invalid wallet QR: ' + e.message);
     }
@@ -1176,7 +1171,7 @@ const Wallet: React.FC = () => {
         });
         setAmount(liveBal.availableStr);
         setError(msg);
-        Alert.alert('Insufficient free balance', msg);
+        toast.error('Insufficient free balance', msg);
         return;
       }
 
@@ -1206,7 +1201,7 @@ const Wallet: React.FC = () => {
       const tx = ctx.transferWart(account, recipient, wartAmount);
       const res = await submitWarthogTransaction(selectedNode, tx);
       const sentTxHash = res.txHash;
-      Alert.alert('Sent!', `Tx Hash: ${sentTxHash}`);
+      toast.success('Sent', `Tx ${sentTxHash.slice(0, 20)}…`);
       setSentTxLog((prev) => [sentTxHash, ...prev]);
       setShowRecentTxLog(true);
       setTimeout(() => setShowRecentTxLog(false), 35000); // Hide after 35 seconds
@@ -1226,7 +1221,7 @@ const Wallet: React.FC = () => {
         });
       }
       setError(msg);
-      Alert.alert('Send Failed', msg);
+      toast.error('Send failed', msg);
     } finally {
       setSending(false);
     }
@@ -1234,7 +1229,7 @@ const Wallet: React.FC = () => {
 
   const copyToClipboard = (text: string, label: string) => {
     Clipboard.setStringAsync(text);
-    Alert.alert('Copied!', `${label} copied`);
+    toast.success('Copied', `${label} copied`);
   };
 
   // Address Book handlers
@@ -1242,12 +1237,6 @@ const Wallet: React.FC = () => {
     setToAddr(contact.address);
     setSelectedContact(contact);
     setShowAddressBook(false);
-  };
-
-  const handleSaveAsContact = () => {
-    if (toAddr && isValidAddress(toAddr)) {
-      setShowAddressBook(true);
-    }
   };
 
   const hasSavedWallets = savedWalletNames.length > 0;
@@ -1722,13 +1711,12 @@ const Wallet: React.FC = () => {
             <DexModal
               embedded
               visible
-              allowedModes={['market']}
               onClose={() => {}}
               wallet={wallet}
               selectedNode={selectedNode}
               nextNonce={nextNonce}
-              poolPrefill={null}
-              onPrefillConsumed={() => {}}
+              poolPrefill={defi.dexPoolPrefill}
+              onPrefillConsumed={() => defi.setDexPoolPrefill(null)}
               onSuccess={afterSpendSuccess}
               assetBalances={defi.orderedAssets}
               wartAvailable={balanceAvailable}
@@ -1766,7 +1754,6 @@ const Wallet: React.FC = () => {
               }}
               onOpenDex={(prefill) => {
                 if (prefill) defi.setDexPoolPrefill(prefill);
-                setShowDexModal(true);
               }}
               onRefreshOrders={defi.refreshOpenOrders}
               onRefreshLiquidity={defi.refreshLiquidity}
@@ -2073,20 +2060,20 @@ const Wallet: React.FC = () => {
                   locked={balanceLocked}
                   total={balance}
                   unit="WART"
-                  label="Available balance"
+                  label="Available"
                   layout="stack"
                 />
-                <Text style={styles.label}>To Address (48 chars)</Text>
+                <Text style={styles.label}>To</Text>
                 <View style={styles.addressContainer}>
                   <View style={styles.addressInput}>
                     <StyledTextInput
-                      placeholder="Enter recipient address"
+                      placeholder="Enter public address"
                       value={toAddr}
                       style={styles.inputNoMargin}
                       onChangeText={(value) => {
                         setToAddr(value);
                         if (selectedContact && value !== selectedContact.address) {
-                          setSelectedContact(null); // Clear selected contact if address changed manually
+                          setSelectedContact(null);
                         }
                       }}
                     />
@@ -2104,43 +2091,35 @@ const Wallet: React.FC = () => {
                     >
                       <Text style={styles.contactButtonText}>📇</Text>
                     </TouchableOpacity>
-                    {toAddr && isValidAddress(toAddr) && !selectedContact && (
-                      <TouchableOpacity
-                        style={styles.addressButton}
-                        onPress={handleSaveAsContact}
-                      >
-                        <Text style={styles.saveButtonText}>💾</Text>
-                      </TouchableOpacity>
-                    )}
                   </View>
                 </View>
-                {selectedContact && (
-                  <View style={styles.selectedContact}>
-                    <Text style={styles.selectedContactText}>
-                      Selected: {selectedContact.name}
-                    </Text>
+                <Text style={styles.label}>Amount</Text>
+                <View style={styles.addressContainer}>
+                  <View style={styles.addressInput}>
+                    <StyledTextInput
+                      placeholder="0"
+                      value={amount}
+                      style={styles.inputNoMargin}
+                      onChangeText={setAmount}
+                      keyboardType="numeric"
+                    />
                   </View>
-                )}
-                <Text style={styles.label}>Amount (WART)</Text>
-                <StyledTextInput placeholder="Enter amount to send" value={amount} onChangeText={setAmount} keyboardType="numeric" />
-                <TouchableOpacity
-                  style={[styles.bigButton, { marginBottom: theme.spacing.sm, opacity: !spendableWart || spendableWart === '0.00000000' ? 0.5 : 1 }]}
-                  onPress={handleMaxWart}
-                  disabled={!spendableWart || spendableWart === '0.00000000'}
-                >
-                  <Text style={styles.bigButtonText}>Use available</Text>
-                </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.addressButton}
+                    onPress={handleMaxWart}
+                    disabled={!spendableWart || spendableWart === '0.00000000'}
+                  >
+                    <Text style={styles.contactButtonText}>Max</Text>
+                  </TouchableOpacity>
+                </View>
                 <Text style={styles.label}>Fee (WART)</Text>
-                <StyledTextInput placeholder="Transaction fee (default 0.01)" value={fee} onChangeText={setFee} keyboardType="numeric" />
-                <Text style={styles.nonceDisplay}>Auto Nonce: {nextNonce}</Text>
-                <Text style={styles.label}>Manual Nonce (leave blank for auto)</Text>
-                <StyledTextInput placeholder="Optional manual nonce" value={manualNonce} onChangeText={setManualNonce} keyboardType="numeric" />
+                <StyledTextInput placeholder={DEFAULT_FEE} value={fee} onChangeText={setFee} keyboardType="numeric" />
                 <TouchableOpacity
                   style={[styles.bigButton, styles.bigButtonPrimary]}
                   onPress={handleSend}
                   disabled={sending}
                 >
-                  <Text style={styles.bigButtonPrimaryText}>{sending ? 'Sending…' : 'Send Transaction'}</Text>
+                  <Text style={styles.bigButtonPrimaryText}>{sending ? 'Sending…' : 'Send'}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity onPress={() => setShowSendModal(false)}>
                   <Text style={modalCloseStyle}>Close</Text>
@@ -2340,6 +2319,7 @@ const Wallet: React.FC = () => {
             wallet={wallet}
             selectedNode={selectedNode}
             nextNonce={nextNonce}
+            assets={defi.orderedAssets}
             prefill={defi.sendAssetPrefill}
             onPrefillConsumed={() => defi.setSendAssetPrefill(null)}
             onSuccess={afterSpendSuccess}
@@ -2352,20 +2332,6 @@ const Wallet: React.FC = () => {
             nextNonce={nextNonce}
             onSuccess={afterSpendSuccess}
             onTrackAsset={(hash, name) => defi.addWatchedAsset(hash, name || '')}
-          />
-          <DexModal
-            visible={showDexModal}
-            onClose={() => setShowDexModal(false)}
-            wallet={wallet}
-            selectedNode={selectedNode}
-            nextNonce={nextNonce}
-            poolPrefill={defi.dexPoolPrefill}
-            onPrefillConsumed={() => defi.setDexPoolPrefill(null)}
-            onSuccess={afterSpendSuccess}
-            assetBalances={defi.orderedAssets}
-            wartAvailable={balanceAvailable}
-            wartLocked={balanceLocked}
-            wartTotal={balance}
           />
         </>
       )}

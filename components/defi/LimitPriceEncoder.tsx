@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, Text, TextInput, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity } from 'react-native';
+import { toast } from '../../utils/toast';
 import { encodeLimitPrice } from 'warthog-ts';
 import { defiStyles } from './defiStyles';
 import { theme } from '../../theme';
@@ -29,7 +30,7 @@ const LimitPriceEncoder: React.FC<Props> = ({
 
   const handleEncode = () => {
     if (!price.trim()) {
-      Alert.alert('Missing price', 'Enter a human-readable limit price first');
+      toast.error('Missing price', 'Enter a human-readable limit price first');
       return;
     }
     const decimalsNum = parseInt(decimals, 10) || 8;
@@ -43,7 +44,7 @@ const LimitPriceEncoder: React.FC<Props> = ({
       onEncodedChange(hex);
     } catch (e: any) {
       onEncodedChange('');
-      Alert.alert('Encode failed', e?.message || 'Could not encode limit price');
+      toast.error('Encode failed', e?.message || 'Could not encode limit price');
     }
   };
 

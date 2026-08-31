@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Alert } from 'react-native';
+import { toast } from '../utils/toast';
 import { WalletData, WalletAction } from '../types';
 import { SECURE_STORE_KEYS } from '../constants';
 import { storage } from '../utils/storage';
@@ -127,7 +128,7 @@ export const useWallet = () => {
       await storage.setItemAsync(SECURE_STORE_KEYS.wallet(trimmed), encryptedWallet);
     } catch (err: any) {
       console.error('Error saving wallet:', err);
-      Alert.alert('Error', 'Failed to save wallet securely');
+      toast.error('Error', 'Failed to save wallet securely');
     }
   };
 
@@ -146,9 +147,9 @@ export const useWallet = () => {
       const fileName = `warthog-wallet-${wallet.address.slice(0, 8)}.json`;
       const fileUri = `${FileSystem.documentDirectory}${fileName}`;
       await FileSystem.writeAsStringAsync(fileUri, walletJson);
-      Alert.alert('Success', `Wallet exported to ${fileName}`);
+      toast.success('Exported', `Wallet exported to ${fileName}`);
     } catch {
-      Alert.alert('Error', 'Failed to export wallet');
+      toast.error('Error', 'Failed to export wallet');
     }
   };
 
@@ -162,7 +163,7 @@ export const useWallet = () => {
 
   const handleClearWallet = async () => {
     if (!currentWalletName) {
-      Alert.alert('Error', 'No saved wallet selected to clear');
+      toast.error('Error', 'No saved wallet selected to clear');
       return;
     }
 
@@ -183,7 +184,7 @@ export const useWallet = () => {
               handleLogout();
               setWalletAction(updatedNames.length > 0 ? 'login' : 'create');
             } catch {
-              Alert.alert('Error', 'Failed to clear wallet');
+              toast.error('Error', 'Failed to clear wallet');
             }
           },
         },
@@ -201,7 +202,7 @@ export const useWallet = () => {
         await loginFromFile(result.assets[0].uri);
       }
     } catch {
-      Alert.alert('Error', 'Failed to pick file');
+      toast.error('Error', 'Failed to pick file');
     }
   };
 
@@ -211,7 +212,7 @@ export const useWallet = () => {
       const walletJson = JSON.parse(fileContent);
 
       if (!walletJson.mnemonic && !walletJson.privateKey) {
-        Alert.alert('Error', 'Invalid wallet file format');
+        toast.error('Error', 'Invalid wallet file format');
         return;
       }
 
@@ -222,7 +223,7 @@ export const useWallet = () => {
       setWallet(importedWallet);
       setIsLoggedIn(true);
     } catch {
-      Alert.alert('Error', 'Failed to import wallet from file');
+      toast.error('Error', 'Failed to import wallet from file');
     }
   };
 

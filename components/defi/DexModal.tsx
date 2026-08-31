@@ -8,7 +8,6 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  Alert,
   ActivityIndicator,
   Modal,
   FlatList,
@@ -38,6 +37,7 @@ import {
 import { DEFAULT_FEE } from '../../constants';
 import type { AssetBalance, DexPoolPrefill, WalletData } from '../../types';
 import { theme } from '../../theme';
+import { toast } from '../../utils/toast';
 
 interface Props {
   visible: boolean;
@@ -55,7 +55,7 @@ interface Props {
   wartTotal?: string;
   /** Inline on overview (no overlay). */
   embedded?: boolean;
-  /** Limit which DEX modes are shown. Overview uses market swap only. */
+  /** Limit which DEX modes are shown. Omit to show Market · Limit · Pool. */
   allowedModes?: OrderMode[];
 }
 
@@ -226,11 +226,14 @@ const DexModal: React.FC<Props> = ({
     }
   }, [modes, orderMode]);
 
-  // Prefill from overview "Manage in DEX"
+  // Prefill from overview asset DEX / Manage in DEX
   useEffect(() => {
     if (!isLive || !poolPrefill?.hash) return;
     const hash = normalizeAssetHash(poolPrefill.hash);
     const match = tokenOptions.find((t) => t.hash === hash);
+    const nextMode = poolPrefill.mode && modes.includes(poolPrefill.mode)
+      ? poolPrefill.mode
+      : 'market';
     setSelectedAsset(
       match || {
         hash,
@@ -243,11 +246,11 @@ const DexModal: React.FC<Props> = ({
       }
     );
     setManualHashInput(hash);
-    setOrderMode('pool');
-    setLiqMode('deposit');
+    setOrderMode(nextMode);
+    if (nextMode === 'pool') setLiqMode('deposit');
     onPrefillConsumed();
     void loadMarket(hash);
-  }, [isLive, poolPrefill, onPrefillConsumed, loadMarket, tokenOptions]);
+  }, [isLive, poolPrefill, onPrefillConsumed, loadMarket, tokenOptions, modes]);
 
   // Default token when opening without prefill
   useEffect(() => {
@@ -412,7 +415,7 @@ const DexModal: React.FC<Props> = ({
   const fillMax = async () => {
     const info = paySpendable || (await refreshPaySpendable());
     if (!info) {
-      Alert.alert(
+      toast.error(
         'Balance',
         payingWart ? 'Could not load available WART' : 'Select an asset and load balance first'
       );
@@ -436,7 +439,7 @@ const DexModal: React.FC<Props> = ({
   const applyManualHash = () => {
     const hash = normalizeAssetHash(manualHashInput);
     if (!isValidAssetHash(hash)) {
-      Alert.alert('Invalid hash', 'Asset hash must be 64 hex characters');
+      toast.error('Invalid hash', 'Asset hash must be 64 hex characters');
       return;
     }
     const match = tokenOptions.find((t) => t.hash === hash);
@@ -456,12 +459,12 @@ const DexModal: React.FC<Props> = ({
 
   const handleSwap = async () => {
     if (!assetHash || !isValidAssetHash(assetHash)) {
-      Alert.alert('Select token', 'Select a token to swap');
+      toast.error('Select token', 'Select a token to swap');
       return;
     }
     const amountStr = String(payAmount).trim().replace(',', '.');
     if (!amountStr || parseFloat(amountStr) <= 0) {
-      Alert.alert('Amount', 'Enter an amount');
+      toast.error('Amount', 'Enter an amount');
       return;
     }
 
@@ -469,14 +472,14 @@ const DexModal: React.FC<Props> = ({
     if (orderMode === 'limit') {
       const p = parseFloat(String(limitPrice).replace(',', '.'));
       if (!Number.isFinite(p) || p <= 0) {
-        Alert.alert('Limit price', 'Enter a valid limit price (WART per token)');
+        toast.error('Limit price', 'Enter a valid limit price (WART per token)');
         return;
       }
       priceForEncode = p;
     } else if (priceForEncode == null) {
       const m = await loadMarket(assetHash);
       if (!m?.spot) {
-        Alert.alert(
+        toast.error(
           'No pool price',
           'Cannot place a market order without a pool spot price. Try Limit instead.'
         );
@@ -497,7 +500,7 @@ const DexModal: React.FC<Props> = ({
         }
         if (amountExceedsAvailable(amountStr, spendable.available)) {
           setPayAmount(spendable.available);
-          Alert.alert(
+          toast.error(
             'Insufficient free balance',
             insufficientFreeBalanceMessage({
               available: spendable.available,
@@ -531,11 +534,11 @@ const DexModal: React.FC<Props> = ({
           : payingWart
             ? 'Limit buy placed'
             : 'Limit sell placed';
-      Alert.alert(
+      toast.success(
         'Submitted',
         orderMode === 'market'
-          ? `${label}\nMay fill against the pool at your slippage price.\n${result.txHash.slice(0, 20)}…`
-          : `${label}\nFunds may stay locked until filled.\n${result.txHash.slice(0, 20)}…`
+          ? `${label} · ${result.txHash.slice(0, 16)}…`
+          : `${label} · locked until filled · ${result.txHash.slice(0, 16)}…`
       );
       setPayAmount('');
       setManualNonce('');
@@ -553,7 +556,7 @@ const DexModal: React.FC<Props> = ({
           });
         }
       }
-      Alert.alert('Failed', message);
+      toast.error('Failed', message);
     } finally {
       setLoading(false);
     }
@@ -561,7 +564,7 @@ const DexModal: React.FC<Props> = ({
 
   const handleLiquidity = async () => {
     if (!isValidAssetHash(assetHash)) {
-      Alert.alert('Token', 'Select a pool token');
+      toast.error('Token', 'Select a pool token');
       return;
     }
     setLoading(true);
@@ -591,14 +594,14 @@ const DexModal: React.FC<Props> = ({
         });
       }
       await onSuccess(result.nonce + 1);
-      Alert.alert('Submitted', `Liquidity ${liqMode}: ${result.txHash.slice(0, 20)}…`);
+      toast.success('Submitted', `Liquidity ${liqMode}: ${result.txHash.slice(0, 20)}…`);
       setLpAssetAmt('');
       setLpWartAmt('');
       setLpShares('');
       setManualNonce('');
       void loadMarket(assetHash);
     } catch (e: any) {
-      Alert.alert('Failed', e.message || 'Failed');
+      toast.error('Failed', e.message || 'Failed');
     } finally {
       setLoading(false);
     }

@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, TouchableOpacity } from 'react-native';
+import { toast } from '../../utils/toast';
 import * as Clipboard from 'expo-clipboard';
 import FormattedNumber from '../FormattedNumber';
 import { useNumberDisplay } from '../../contexts/NumberDisplayContext';
@@ -64,7 +65,7 @@ const DexPoolMarketCard: React.FC<Props> = ({ marketData, assetName: assetNamePr
 
   const copyHash = async (hash: string) => {
     await Clipboard.setStringAsync(hash);
-    Alert.alert('Copied', 'Asset hash copied to clipboard');
+    toast.success('Copied', 'Asset hash copied to clipboard');
   };
 
   const panelBorder = withBorderAlpha(liquidityPoolStyles.border, 0.6);

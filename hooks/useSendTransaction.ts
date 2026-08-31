@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Alert } from 'react-native';
+import { toast } from '../utils/toast';
 import {
   Account,
   Address,
@@ -47,19 +47,19 @@ export const useSendTransaction = (
 
   const handleSend = async () => {
     if (!wallet) {
-      Alert.alert('Error', 'No wallet loaded');
+      toast.error('Error', 'No wallet loaded');
       return;
     }
     if (!toAddr || !validateAddress(toAddr)) {
-      Alert.alert('Error', !toAddr ? 'Recipient address is required' : 'Invalid recipient address');
+      toast.error('Error', !toAddr ? 'Recipient address is required' : 'Invalid recipient address');
       return;
     }
     if (!amount || parseFloat(amount) <= 0) {
-      Alert.alert('Error', 'Amount must be greater than 0');
+      toast.error('Error', 'Amount must be greater than 0');
       return;
     }
     if (!fee || parseFloat(fee) < 0) {
-      Alert.alert('Error', 'Fee must be 0 or greater');
+      toast.error('Error', 'Fee must be 0 or greater');
       return;
     }
 
@@ -113,10 +113,10 @@ export const useSendTransaction = (
       setFee(DEFAULT_FEE.toString());
       setManualNonce('');
 
-      Alert.alert('Transaction Sent', `Transaction hash: ${txHashStr.slice(0, 16)}...`);
+      toast.success('Sent', `Tx ${txHashStr.slice(0, 16)}…`);
     } catch (error: any) {
       console.error('Send transaction error:', error);
-      Alert.alert('Transaction Failed', error.message || 'Failed to send transaction');
+      toast.error('Send failed', error.message || 'Failed to send transaction');
     } finally {
       setSending(false);
     }

@@ -10,6 +10,7 @@ import {
 import { Contact } from '../../types';
 import { colors, spacing, borderRadius, typography, shadows } from '../../theme';
 import { shortenAddress } from '../../utils/addressValidation';
+import { toast } from '../../utils/toast';
 
 type ContactItemMode = 'display' | 'select' | 'manage';
 
@@ -83,7 +84,7 @@ export const ContactItem: React.FC<ContactItemProps> = ({
     // Using Expo Clipboard
     const Clipboard = await import('expo-clipboard');
     await Clipboard.setStringAsync(contact.address);
-    Alert.alert('Copied!', 'Address copied to clipboard');
+    toast.success('Copied', 'Address copied to clipboard');
   };
 
   const handleShareContact = async () => {

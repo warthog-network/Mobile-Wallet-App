@@ -11,7 +11,7 @@ import {
   Switch,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
-import { Alert } from 'react-native';
+import { toast } from '../../utils/toast';
 import NumberDisplaySettings from './NumberDisplaySettings';
 import SelectDropdown from '../SelectDropdown';
 import { validateWarthogAddressInput } from '../../utils/warthogFormat';
@@ -100,14 +100,14 @@ const ToolsModal: React.FC<Props> = ({
   const copyAddress = (text: string) => {
     if (!text) return;
     Clipboard.setStringAsync(text);
-    Alert.alert('Copied', 'Address copied to clipboard');
+    toast.success('Copied', 'Address copied to clipboard');
   };
 
   const runEnable = async (force2fa?: boolean) => {
     if (!onEnableBiometrics || !security) return;
     const twoFactor = force2fa ?? want2fa;
     if (twoFactor && !secPassword.trim() && !security.hasPassword) {
-      Alert.alert(
+      toast.error(
         'Password needed',
         '2FA needs a password — enter the wallet password below.',
       );

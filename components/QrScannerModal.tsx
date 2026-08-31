@@ -5,7 +5,6 @@ import {
   Modal,
   TouchableOpacity,
   StyleSheet,
-  Alert,
   ActivityIndicator,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
@@ -13,6 +12,7 @@ import { parseAddressFromQr } from '../utils/addressQr';
 import { parseWalletQrPayload } from '../utils/walletQr';
 import { defiColors } from './defi/defiStyles';
 import { theme } from '../theme';
+import { toast } from '../utils/toast';
 
 export type QrScanMode = 'address' | 'wallet';
 
@@ -61,7 +61,7 @@ const QrScannerModal: React.FC<Props> = ({
     if (mode === 'wallet') {
       const encrypted = parseWalletQrPayload(data);
       if (!encrypted) {
-        Alert.alert('Invalid QR', 'Scanned code is not a wallet export QR. Generate one in wartbunker under Tools → Mobile Transfer.');
+        toast.error('Invalid QR', 'Not a wallet export QR. Generate one in WartBunker under Tools → Mobile Transfer.');
         setScanned(false);
         return;
       }
@@ -72,7 +72,7 @@ const QrScannerModal: React.FC<Props> = ({
 
     const address = parseAddressFromQr(data);
     if (!address) {
-      Alert.alert('Invalid QR', 'Scanned code is not a valid Warthog address');
+      toast.error('Invalid QR', 'Scanned code is not a valid Warthog address');
       setScanned(false);
       return;
     }

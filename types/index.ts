@@ -83,6 +83,8 @@ export interface AssetPrefill {
 export interface DexPoolPrefill {
   hash: string;
   name: string;
+  /** Overview DEX mode to open. Asset DEX → market; LP manage → pool. */
+  mode?: 'market' | 'limit' | 'pool';
 }
 
 export interface OpenLimitOrder {

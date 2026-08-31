@@ -15,6 +15,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
+import { toast } from './utils/toast';
 import { useAddressBook } from './components/AddressBook/AddressBookModal';
 import {
   fetchAccountHistory,
@@ -206,9 +207,9 @@ const TransactionHistory: React.FC<Props> = ({
                 notes: 'Added from transaction history',
                 isFavorite: false,
               });
-              Alert.alert('Success', `Contact "${defaultName}" saved!`);
+              toast.success('Contact saved', `"${defaultName}" added`);
             } catch {
-              Alert.alert('Error', 'Failed to save contact. It may already exist.');
+              toast.error('Could not save', 'Failed to save contact. It may already exist.');
             }
           },
         },
@@ -648,7 +649,7 @@ const TransactionHistory: React.FC<Props> = ({
 
   const copy = (text: string, label: string) => {
     Clipboard.setStringAsync(text);
-    Alert.alert('Copied!', `${label} copied`);
+    toast.success('Copied', `${label} copied`);
   };
 
   const showInitialLoader = loading && history.length === 0;

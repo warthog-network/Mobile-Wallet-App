@@ -359,6 +359,11 @@ export const defiStyles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.1)',
+    overflow: 'hidden',
+  },
+  assetAvatarImage: {
+    width: '100%',
+    height: '100%',
   },
   assetAvatarBlue: { backgroundColor: '#2563eb' },
   assetAvatarPurple: { backgroundColor: '#7c3aed' },

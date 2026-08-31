@@ -5,6 +5,7 @@ import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-cont
 import Wallet from './Wallet';
 import TropicalBackground from './components/TropicalBackground';
 import { NumberDisplayProvider } from './contexts/NumberDisplayContext';
+import AppToast from './components/AppToast';
 import { SvgXml } from 'react-native-svg';
 
 const svgContent = `<?xml version="1.0" encoding="utf-8"?>
@@ -80,6 +81,7 @@ export default function App() {
     <SafeAreaProvider>
       <NumberDisplayProvider>
         <AppScroll />
+        <AppToast />
       </NumberDisplayProvider>
     </SafeAreaProvider>
   );

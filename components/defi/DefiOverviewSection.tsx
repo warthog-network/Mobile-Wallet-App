@@ -1,5 +1,6 @@
 import React, { useState, useRef, useMemo } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, Alert, PanResponder, findNodeHandle } from 'react-native';
+import { toast } from '../../utils/toast';
 import * as Clipboard from 'expo-clipboard';
 import FormattedNumber from '../FormattedNumber';
 import SpendableBalanceDisplay from '../SpendableBalanceDisplay';
@@ -10,6 +11,8 @@ import { submitCancelLimitOrder } from '../../utils/defiSubmit';
 import { DEFAULT_FEE } from '../../constants';
 import type { AssetBalance, LiquidityPosition, OpenLimitOrder, OpenOrdersByAsset, WalletData } from '../../types';
 import { theme } from '../../theme';
+import AssetMark, { AssetTitle } from './AssetMark';
+import AssetChartPanel from './AssetChartPanel';
 
 interface Props {
   wallet: WalletData;
@@ -26,7 +29,7 @@ interface Props {
   onRemoveAsset: (hash: string) => Promise<void>;
   onReorderAssets: (fromIndex: number, toIndex: number) => void;
   onSendAsset: (asset: AssetBalance) => void;
-  onOpenDex: (prefill?: { hash: string; name: string }) => void;
+  onOpenDex: (prefill?: { hash: string; name: string; mode?: 'market' | 'limit' | 'pool' }) => void;
   onRefreshOrders: () => Promise<OpenOrdersByAsset[] | null | undefined>;
   onRefreshLiquidity: () => Promise<void>;
   onNonceBump: (nonce: number) => Promise<void>;
@@ -80,16 +83,16 @@ const DefiOverviewSection: React.FC<Props> = ({
 
   const handleAdd = async () => {
     if (!isValidAssetHash(manualHash)) {
-      Alert.alert('Invalid hash', 'Enter a 64-character hex asset hash');
+      toast.error('Invalid hash', 'Enter a 64-character hex asset hash');
       return;
     }
     setAdding(true);
     try {
       await onAddAsset(manualHash.trim());
       setManualHash('');
-      Alert.alert('Added', 'Asset added to your wallet');
+      toast.success('Added', 'Asset added to your wallet');
     } catch (e: any) {
-      Alert.alert('Failed', e.message);
+      toast.error('Failed', e.message);
     } finally {
       setAdding(false);
     }
@@ -114,9 +117,9 @@ const DefiOverviewSection: React.FC<Props> = ({
             });
             await onNonceBump(result.nonce + 1);
             await onRefreshOrders();
-            Alert.alert('Submitted', `Cancel tx: ${result.txHash.slice(0, 16)}…`);
+            toast.success('Submitted', `Cancel tx: ${result.txHash.slice(0, 16)}…`);
           } catch (e: any) {
-            Alert.alert('Cancel failed', e.message);
+            toast.error('Cancel failed', e.message);
           } finally {
             setCancelling(null);
           }
@@ -127,7 +130,7 @@ const DefiOverviewSection: React.FC<Props> = ({
 
   const copyHash = (text: string, label = 'Hash') => {
     Clipboard.setStringAsync(text);
-    Alert.alert('Copied', `${label} copied to clipboard`);
+    toast.success('Copied', `${label} copied to clipboard`);
   };
 
   const orderCount = openOrders?.reduce(
@@ -384,13 +387,9 @@ const DefiOverviewSection: React.FC<Props> = ({
               </View>
             </View>
           ) : null}
-          <View style={[defiStyles.assetAvatar, defiStyles.assetAvatarBlue]}>
-            <Text style={defiStyles.assetAvatarText}>
-              {asset.name?.[0]?.toUpperCase() || '?'}
-            </Text>
-          </View>
+          <AssetMark hash={asset.hash} name={asset.name} />
           <View style={{ flex: 1, marginLeft: theme.spacing.sm }}>
-            <Text style={defiStyles.cardTitle}>{asset.name}</Text>
+            <AssetTitle hash={asset.hash} name={asset.name} style={defiStyles.cardTitle} />
             <TouchableOpacity onPress={() => copyHash(asset.hash, 'Asset hash')} disabled={ghost}>
               <Text style={defiStyles.cardSub}>
                 {asset.hash.slice(0, 8)}…{asset.hash.slice(-6)}
@@ -418,7 +417,7 @@ const DefiOverviewSection: React.FC<Props> = ({
         </TouchableOpacity>
         <TouchableOpacity
           style={[defiStyles.compactBtn, { flex: 1, minWidth: 70 }]}
-          onPress={() => onOpenDex({ hash: asset.hash, name: asset.name })}
+          onPress={() => onOpenDex({ hash: asset.hash, name: asset.name, mode: 'market' })}
           disabled={ghost}
         >
           <Text style={defiStyles.compactBtnText}>DEX</Text>
@@ -438,6 +437,13 @@ const DefiOverviewSection: React.FC<Props> = ({
           <Text style={defiStyles.removeBtnText}>×</Text>
         </TouchableOpacity>
       </View>
+      {!ghost ? (
+        <AssetChartPanel
+          nodeUrl={selectedNode}
+          hash={asset.hash}
+          assetName={asset.name}
+        />
+      ) : null}
     </View>
   );
 
@@ -768,7 +774,7 @@ const DefiOverviewSection: React.FC<Props> = ({
               </View>
 
               <View style={[defiStyles.sectionFooter, { alignItems: 'flex-end' }]}>
-                <TouchableOpacity style={defiStyles.compactBtn} onPress={() => onOpenDex({ hash: pos.hash, name: pos.name })}>
+                <TouchableOpacity style={defiStyles.compactBtn} onPress={() => onOpenDex({ hash: pos.hash, name: pos.name, mode: 'pool' })}>
                   <Text style={defiStyles.compactBtnText}>Manage in DEX</Text>
                 </TouchableOpacity>
               </View>
