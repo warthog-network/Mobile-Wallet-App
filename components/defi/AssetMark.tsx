@@ -11,9 +11,11 @@ import { defiStyles } from './defiStyles';
 export default function AssetMark({
   hash,
   name,
+  size = 'md',
 }: {
   hash: string;
   name?: string;
+  size?: 'xs' | 'md';
 }) {
   const meta = useAssetMetadata(hash);
   const urls = useMemo(() => {
@@ -38,7 +40,13 @@ export default function AssetMark({
   }, [hash]);
 
   return (
-    <View style={[defiStyles.assetAvatar, defiStyles.assetAvatarBlue]}>
+    <View
+      style={[
+        defiStyles.assetAvatar,
+        defiStyles.assetAvatarBlue,
+        size === 'xs' && defiStyles.assetAvatarXs,
+      ]}
+    >
       {src ? (
         <Image
           source={{ uri: src }}
@@ -46,7 +54,14 @@ export default function AssetMark({
           onError={() => setIdx((i) => i + 1)}
         />
       ) : (
-        <Text style={defiStyles.assetAvatarText}>{letter || '?'}</Text>
+        <Text
+          style={[
+            defiStyles.assetAvatarText,
+            size === 'xs' && { fontSize: 11 },
+          ]}
+        >
+          {letter || '?'}
+        </Text>
       )}
     </View>
   );

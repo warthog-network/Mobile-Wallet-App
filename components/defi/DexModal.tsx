@@ -39,6 +39,12 @@ import type { AssetBalance, DexPoolPrefill, WalletData } from '../../types';
 import { theme } from '../../theme';
 import SpendConfirm from '../SpendConfirm';
 import { toast } from '../../utils/toast';
+import AssetMark, { AssetTitle } from './AssetMark';
+import {
+  assetDisplayTicker,
+  useAssetMetadata,
+  ZERO_ASSET_HASH,
+} from '../../utils/assetMetadata';
 
 interface Props {
   visible: boolean;
@@ -630,37 +636,50 @@ const DexModal: React.FC<Props> = ({
     submitLabel === 'Enter limit price' ||
     submitLabel === 'No pool price';
 
-  const pairLabel = selectedAsset?.symbol
+  const selectedMeta = useAssetMetadata(selectedAsset?.hash);
+  const selectedTicker =
+    assetDisplayTicker(selectedAsset?.symbol || selectedAsset?.name, selectedMeta) ||
+    selectedAsset?.symbol ||
+    'token';
+  const pairLabel = selectedAsset
     ? payingWart
-      ? `WART → ${selectedAsset.symbol}`
-      : `${selectedAsset.symbol} → WART`
+      ? `WART → ${selectedTicker}`
+      : `${selectedTicker} → WART`
     : 'Pick a token';
 
   const TokenPill = ({
-    symbol,
+    hash,
+    name,
     onPress,
     static: isStatic,
   }: {
-    symbol: string;
+    hash?: string;
+    name: string;
     onPress?: () => void;
     static?: boolean;
-  }) =>
-    isStatic ? (
+  }) => {
+    const meta = useAssetMetadata(hash);
+    const ticker = (hash ? assetDisplayTicker(name, meta) : '') || name;
+    const mark = hash ? (
+      <AssetMark hash={hash} name={name} size="xs" />
+    ) : (
+      <View style={styles.tokenAvatar}>
+        <Text style={styles.tokenAvatarText}>{name[0] || '?'}</Text>
+      </View>
+    );
+    return isStatic ? (
       <View style={styles.tokenPill}>
-        <View style={styles.tokenAvatar}>
-          <Text style={styles.tokenAvatarText}>{symbol[0] || '?'}</Text>
-        </View>
-        <Text style={styles.tokenPillText}>{symbol}</Text>
+        {mark}
+        <Text style={styles.tokenPillText}>{ticker}</Text>
       </View>
     ) : (
       <TouchableOpacity style={styles.tokenPill} onPress={onPress}>
-        <View style={styles.tokenAvatar}>
-          <Text style={styles.tokenAvatarText}>{symbol[0] || '?'}</Text>
-        </View>
-        <Text style={styles.tokenPillText}>{symbol}</Text>
+        {mark}
+        <Text style={styles.tokenPillText}>{ticker}</Text>
         <Text style={styles.tokenChevron}>▾</Text>
       </TouchableOpacity>
     );
+  };
 
   return (
     <DefiModalShell
@@ -704,8 +723,8 @@ const DexModal: React.FC<Props> = ({
             <View style={{ flex: 1, minWidth: 0 }}>
               <Text style={styles.cardTitle}>Liquidity pool</Text>
               <Text style={styles.cardSub} numberOfLines={1}>
-                {selectedAsset?.symbol
-                  ? `${selectedAsset.symbol} / WART pool`
+                {selectedAsset
+                  ? `${selectedTicker} / WART pool`
                   : 'Pick a token for the pool'}
               </Text>
             </View>
@@ -742,7 +761,8 @@ const DexModal: React.FC<Props> = ({
             </View>
             <View style={styles.amountRow}>
               <TokenPill
-                symbol={selectedAsset?.symbol || 'Select'}
+                hash={selectedAsset?.hash}
+                name={selectedAsset?.symbol || 'Select'}
                 onPress={() => setShowTokenPicker(true)}
               />
             </View>
@@ -771,7 +791,7 @@ const DexModal: React.FC<Props> = ({
           {liqMode === 'deposit' ? (
             <>
               <View style={styles.panel}>
-                <Text style={styles.mutedLabel}>You deposit · {selectedAsset?.symbol || 'Asset'}</Text>
+                <Text style={styles.mutedLabel}>You deposit · {selectedTicker === 'token' ? 'Asset' : selectedTicker}</Text>
                 <View style={styles.amountRow}>
                   <TextInput
                     style={styles.amountInput}
@@ -782,7 +802,8 @@ const DexModal: React.FC<Props> = ({
                     placeholderTextColor="#3f3f46"
                   />
                   <TokenPill
-                    symbol={selectedAsset?.symbol || 'Select'}
+                    hash={selectedAsset?.hash}
+                    name={selectedAsset?.symbol || 'Select'}
                     onPress={() => setShowTokenPicker(true)}
                   />
                 </View>
@@ -803,7 +824,7 @@ const DexModal: React.FC<Props> = ({
                     placeholder="0"
                     placeholderTextColor="#3f3f46"
                   />
-                  <TokenPill symbol="WART" static />
+                  <TokenPill hash={ZERO_ASSET_HASH} name="WART" static />
                 </View>
               </View>
               <TouchableOpacity
@@ -834,7 +855,7 @@ const DexModal: React.FC<Props> = ({
                     placeholder="0"
                     placeholderTextColor="#3f3f46"
                   />
-                  <TokenPill symbol="LP" static />
+                  <TokenPill name="LP" static />
                 </View>
               </View>
               <TouchableOpacity
@@ -917,10 +938,11 @@ const DexModal: React.FC<Props> = ({
                 <Text style={styles.chipText}>MAX</Text>
               </TouchableOpacity>
               {payingWart ? (
-                <TokenPill symbol="WART" static />
+                <TokenPill hash={ZERO_ASSET_HASH} name="WART" static />
               ) : (
                 <TokenPill
-                  symbol={selectedAsset?.symbol || 'Select'}
+                  hash={selectedAsset?.hash}
+                  name={selectedAsset?.symbol || 'Select'}
                   onPress={() => setShowTokenPicker(true)}
                 />
               )}
@@ -949,10 +971,11 @@ const DexModal: React.FC<Props> = ({
                 {receiveEstimate != null ? formatEstimate(receiveEstimate) : '0'}
               </Text>
               {!payingWart ? (
-                <TokenPill symbol="WART" static />
+                <TokenPill hash={ZERO_ASSET_HASH} name="WART" static />
               ) : (
                 <TokenPill
-                  symbol={selectedAsset?.symbol || 'Select'}
+                  hash={selectedAsset?.hash}
+                  name={selectedAsset?.symbol || 'Select'}
                   onPress={() => setShowTokenPicker(true)}
                 />
               )}
@@ -962,7 +985,7 @@ const DexModal: React.FC<Props> = ({
           {orderMode === 'limit' && (
             <View style={styles.panel}>
               <Text style={styles.mutedLabel}>
-                Limit price (WART per {selectedAsset?.symbol || 'token'})
+                Limit price (WART per {selectedTicker})
               </Text>
               <View style={styles.amountRow}>
                 <TextInput
@@ -996,7 +1019,7 @@ const DexModal: React.FC<Props> = ({
               <View style={styles.summaryRow}>
                 <Text style={styles.mutedLabel}>Your limit</Text>
                 <Text style={styles.summaryValue}>
-                  {formatSpot(effectiveLimitPrice)} / {selectedAsset?.symbol || 'token'}
+                  {formatSpot(effectiveLimitPrice)} / {selectedTicker}
                 </Text>
               </View>
             )}
@@ -1124,11 +1147,13 @@ const DexModal: React.FC<Props> = ({
                   onPress={() => selectToken(item)}
                 >
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
-                    <View style={styles.tokenAvatar}>
-                      <Text style={styles.tokenAvatarText}>{item.symbol[0]}</Text>
-                    </View>
+                    <AssetMark hash={item.hash} name={item.symbol} size="xs" />
                     <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text style={styles.tokenPillText}>{item.symbol}</Text>
+                      <AssetTitle
+                        hash={item.hash}
+                        name={item.symbol}
+                        style={styles.tokenPillText}
+                      />
                       <Text style={styles.hashHint} numberOfLines={1}>
                         {item.hash.slice(0, 12)}…
                       </Text>
@@ -1145,8 +1170,8 @@ const DexModal: React.FC<Props> = ({
         open={swapConfirm}
         title="Confirm DEX submit"
         rows={[
-          { label: 'Token', value: selectedAsset?.symbol || assetHash || '—' },
-          { label: 'Amount', value: `${payAmount || '—'} ${payingWart ? 'WART' : selectedAsset?.symbol || 'token'}` },
+          { label: 'Token', value: selectedTicker || assetHash || '—' },
+          { label: 'Amount', value: `${payAmount || '—'} ${payingWart ? 'WART' : selectedTicker}` },
           { label: 'Fee', value: `${fee} WART` },
           { label: 'Mode', value: orderMode },
         ]}

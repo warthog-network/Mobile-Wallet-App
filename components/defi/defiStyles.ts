@@ -387,6 +387,11 @@ export const defiStyles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.1)',
     overflow: 'hidden',
   },
+  assetAvatarXs: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+  },
   assetAvatarImage: {
     width: '100%',
     height: '100%',
