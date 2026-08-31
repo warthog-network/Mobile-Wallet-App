@@ -1137,14 +1137,36 @@ const Wallet: React.FC = () => {
     }
   };
 
+  const nameFromWalletFile = (filename: string | null | undefined): string => {
+    const base = String(filename || '')
+      .replace(/\.[^.]+$/, '')
+      .replace(/^warthog_wallet[_-]*/i, '')
+      .trim();
+    return base;
+  };
+
+  const beginNamedRestore = (data: WalletData, suggestedName: string) => {
+    setWalletData(data);
+    setWalletName(suggestedName);
+    setWalletAction('import');
+    setPassword('');
+    setConfirmPassword('');
+    setConsentToClose(false);
+    setSaveWalletConsent(false);
+    setSecureStep('save');
+    setModalError(null);
+    setShowModal(true);
+    setError(null);
+  };
+
   const loginFromFile = async () => {
     if (!uploadedFileContent || !password) return setError('No file or password');
     try {
       const data = await decryptWallet(uploadedFileContent, password);
-      commitUnlockedWallet(data);
+      const suggested = nameFromWalletFile(uploadedFileName) || 'Imported';
       setUploadedFileContent(null);
       setPassword('');
-      toast.success('Logged in from file');
+      beginNamedRestore(data, suggested);
     } catch (e: any) {
       setError('Wrong password or invalid file: ' + e.message);
     }
@@ -1154,10 +1176,9 @@ const Wallet: React.FC = () => {
     if (!scannedWalletPayload || !password) return setError('Scan a wallet QR and enter the export password');
     try {
       const data = await decryptWallet(scannedWalletPayload, password);
-      commitUnlockedWallet(data);
       setScannedWalletPayload(null);
       setPassword('');
-      toast.success('Imported', 'Wallet loaded from QR — consider saving it to this device.');
+      beginNamedRestore(data, 'Imported QR');
     } catch (e: any) {
       setError('Wrong password or invalid wallet QR: ' + e.message);
     }
@@ -1304,7 +1325,7 @@ const Wallet: React.FC = () => {
               : accessPath === 'import'
                 ? 'Paste the 64-character private key.'
                 : accessPath === 'load'
-                  ? 'Open an encrypted warthog_wallet.txt file.'
+                  ? 'Open an encrypted warthog_wallet.txt file, then name it to save on this device.'
                   : '';
   const showAccessBack = accessPath !== 'hub';
   const accessBackTarget: AccessPath =
