@@ -419,8 +419,8 @@ const DefiOverviewSection: React.FC<Props> = ({
         ghost && defiStyles.cardGhost,
       ]}
     >
-      <View style={defiStyles.row}>
-        <View style={[defiStyles.row, { flex: 1, justifyContent: 'flex-start' }]}>
+      <View style={defiStyles.assetHead}>
+        <View style={defiStyles.assetId}>
           {reorderableAssetCount > 1 && index < reorderableAssetCount ? (
             <View
               style={defiStyles.dragHandle}
@@ -435,7 +435,7 @@ const DefiOverviewSection: React.FC<Props> = ({
             </View>
           ) : null}
           <AssetMark hash={asset.hash} name={asset.name} />
-          <View style={{ flex: 1, marginLeft: theme.spacing.sm }}>
+          <View style={{ flex: 1, minWidth: 0, marginLeft: theme.spacing.sm }}>
             <AssetTitle hash={asset.hash} name={asset.name} style={defiStyles.cardTitle} />
             <TouchableOpacity onPress={() => copyHash(asset.hash, 'Asset hash')} disabled={ghost}>
               <Text style={defiStyles.cardSub}>
@@ -444,15 +444,17 @@ const DefiOverviewSection: React.FC<Props> = ({
             </TouchableOpacity>
           </View>
         </View>
-        <SpendableBalanceDisplay
-          available={asset.available ?? asset.balance}
-          locked={asset.locked}
-          total={asset.balance}
-          unit={asset.name}
-          layout="row"
-          primaryStyle={defiStyles.balance}
-          unitStyle={defiStyles.balanceUnit}
-        />
+        <View style={defiStyles.assetAmounts}>
+          <SpendableBalanceDisplay
+            available={asset.available ?? asset.balance}
+            locked={asset.locked}
+            total={asset.balance}
+            unit={asset.name}
+            layout="row"
+            primaryStyle={defiStyles.balance}
+            unitStyle={defiStyles.balanceUnit}
+          />
+        </View>
       </View>
       <View style={[defiStyles.row, { marginTop: theme.spacing.sm, flexWrap: 'wrap' }]}>
         <TouchableOpacity

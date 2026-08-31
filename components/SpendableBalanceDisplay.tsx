@@ -82,7 +82,7 @@ const SpendableBalanceDisplay: React.FC<Props> = ({
 
   if (layout === 'row') {
     return (
-      <View style={[{ alignItems: 'flex-end' }, style]}>
+      <View style={[{ alignItems: 'flex-end', minWidth: 0, maxWidth: '100%', width: '100%' }, style]}>
         <View style={styles.rowPrimary}>
           <FormattedNumber
             value={free}
@@ -205,13 +205,19 @@ const styles = StyleSheet.create({
   },
   rowPrimary: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'baseline',
+    justifyContent: 'flex-end',
     gap: 4,
+    maxWidth: '100%',
+    minWidth: 0,
   },
   rowValue: {
     color: theme.colors.textPrimary,
     fontFamily: theme.typography.fontFamily.mono,
     fontSize: theme.typography.bodySm,
+    flexShrink: 1,
+    textAlign: 'right',
   },
   rowUnit: {
     color: defiColors.textMuted,
