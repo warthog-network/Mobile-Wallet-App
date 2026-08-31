@@ -3,6 +3,8 @@
 import { Buffer } from 'buffer';
 import * as ExpoCrypto from 'expo-crypto';
 import CryptoJS from 'crypto-js';
+import { pbkdf2 } from '@noble/hashes/pbkdf2';
+import { sha256 } from '@noble/hashes/sha2';
 import { ethers } from 'ethers';
 import { Account, Address } from 'warthog-ts';
 
@@ -131,41 +133,61 @@ function unb64(s: string): Uint8Array {
   return out;
 }
 
+function derivePbkdf2Key(password: string, salt: Uint8Array, iterations: number): Uint8Array {
+  return pbkdf2(sha256, password, salt, { c: iterations, dkLen: 32 });
+}
+
+function bytesToWordArray(bytes: Uint8Array): CryptoJS.lib.WordArray {
+  let hex = '';
+  for (let i = 0; i < bytes.length; i++) {
+    hex += bytes[i].toString(16).padStart(2, '0');
+  }
+  return CryptoJS.enc.Hex.parse(hex);
+}
+
 async function encryptV3(plaintext: string, password: string): Promise<string> {
-  const subtle = globalThis.crypto?.subtle;
-  if (!subtle) return encryptV2(plaintext, password);
-  const enc = new TextEncoder();
   const salt = crypto.getRandomValues(new Uint8Array(16));
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const base = await subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveKey']);
-  const key = await subtle.deriveKey(
-    { name: 'PBKDF2', salt, iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
-    base,
-    { name: 'AES-GCM', length: 256 },
-    false,
-    ['encrypt'],
-  );
-  const ct = new Uint8Array(await subtle.encrypt({ name: 'AES-GCM', iv }, key, enc.encode(plaintext)));
-  return JSON.stringify({
-    v: 3,
-    kdf: 'pbkdf2-sha256',
-    alg: 'aes-256-gcm',
-    iter: PBKDF2_ITERATIONS,
-    salt: b64(salt),
-    iv: b64(iv),
-    ct: b64(ct),
-  });
+  const keyBytes = derivePbkdf2Key(password, salt, PBKDF2_ITERATIONS);
+  const subtle = globalThis.crypto?.subtle;
+  if (subtle) {
+    try {
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const key = await subtle.importKey(
+        'raw',
+        keyBytes as BufferSource,
+        'AES-GCM',
+        false,
+        ['encrypt'],
+      );
+      const ct = new Uint8Array(
+        await subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(plaintext)),
+      );
+      return JSON.stringify({
+        v: 3,
+        kdf: 'pbkdf2-sha256',
+        alg: 'aes-256-gcm',
+        iter: PBKDF2_ITERATIONS,
+        salt: b64(salt),
+        iv: b64(iv),
+        ct: b64(ct),
+      });
+    } catch {
+      /* fall through to v2 CBC */
+    }
+  }
+  return encryptV2WithKey(plaintext, keyBytes, salt);
 }
 
 async function decryptV3(envelope: { iter?: number; salt: string; iv: string; ct: string }, password: string): Promise<WalletData> {
+  const iterations = Number(envelope.iter) > 0 ? Number(envelope.iter) : PBKDF2_ITERATIONS;
+  const salt = unb64(envelope.salt);
+  const keyBytes = derivePbkdf2Key(password, salt, iterations);
   const subtle = globalThis.crypto?.subtle;
   if (!subtle) throw new Error('Wrong password or invalid encrypted data');
-  const iterations = Number(envelope.iter) > 0 ? Number(envelope.iter) : PBKDF2_ITERATIONS;
-  const base = await subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
-  const key = await subtle.deriveKey(
-    { name: 'PBKDF2', salt: unb64(envelope.salt) as BufferSource, iterations, hash: 'SHA-256' },
-    base,
-    { name: 'AES-GCM', length: 256 },
+  const key = await subtle.importKey(
+    'raw',
+    keyBytes as BufferSource,
+    'AES-GCM',
     false,
     ['decrypt'],
   );
@@ -177,15 +199,9 @@ async function decryptV3(envelope: { iter?: number; salt: string; iv: string; ct
   return JSON.parse(new TextDecoder().decode(pt));
 }
 
-function encryptV2(plaintext: string, password: string): string {
-  const salt = CryptoJS.lib.WordArray.random(16);
+function encryptV2WithKey(plaintext: string, keyBytes: Uint8Array, salt: Uint8Array): string {
   const iv = CryptoJS.lib.WordArray.random(16);
-  const key = CryptoJS.PBKDF2(String(password), salt, {
-    keySize: 256 / 32,
-    iterations: PBKDF2_ITERATIONS,
-    hasher: CryptoJS.algo.SHA256,
-  });
-  const encrypted = CryptoJS.AES.encrypt(plaintext, key, {
+  const encrypted = CryptoJS.AES.encrypt(plaintext, bytesToWordArray(keyBytes), {
     iv,
     mode: CryptoJS.mode.CBC,
     padding: CryptoJS.pad.Pkcs7,
@@ -194,7 +210,7 @@ function encryptV2(plaintext: string, password: string): string {
     v: 2,
     kdf: 'pbkdf2-sha256',
     iter: PBKDF2_ITERATIONS,
-    salt: CryptoJS.enc.Base64.stringify(salt),
+    salt: b64(salt),
     iv: CryptoJS.enc.Base64.stringify(iv),
     ct: CryptoJS.enc.Base64.stringify(encrypted.ciphertext),
   });
@@ -202,15 +218,11 @@ function encryptV2(plaintext: string, password: string): string {
 
 function decryptV2(envelope: { iter?: number; salt: string; iv: string; ct: string }, password: string): WalletData {
   const iterations = Number(envelope.iter) > 0 ? Number(envelope.iter) : PBKDF2_ITERATIONS;
-  const salt = CryptoJS.enc.Base64.parse(envelope.salt);
+  const salt = unb64(envelope.salt);
+  const keyBytes = derivePbkdf2Key(password, salt, iterations);
   const iv = CryptoJS.enc.Base64.parse(envelope.iv);
   const ciphertext = CryptoJS.enc.Base64.parse(envelope.ct);
-  const key = CryptoJS.PBKDF2(String(password), salt, {
-    keySize: 256 / 32,
-    iterations,
-    hasher: CryptoJS.algo.SHA256,
-  });
-  const decrypted = CryptoJS.AES.decrypt({ ciphertext } as CryptoJS.lib.CipherParams, key, {
+  const decrypted = CryptoJS.AES.decrypt({ ciphertext } as CryptoJS.lib.CipherParams, bytesToWordArray(keyBytes), {
     iv,
     mode: CryptoJS.mode.CBC,
     padding: CryptoJS.pad.Pkcs7,

@@ -426,6 +426,7 @@ const Wallet: React.FC = () => {
   const [enableBioOnCreate, setEnableBioOnCreate] = useState(true);
   const [require2faOnCreate, setRequire2faOnCreate] = useState(false);
   const [passkeyBusy, setPasskeyBusy] = useState(false);
+  const [saveStatus, setSaveStatus] = useState('Saving…');
 
   // Address Book state
   const [showAddressBook, setShowAddressBook] = useState(false);
@@ -732,6 +733,7 @@ const Wallet: React.FC = () => {
     const prevEnv = existing ? tryParseEnvelope(existing) : null;
     // Prompt biometrics first so the OS dialog is not stuck behind PBKDF2.
     if (withBio) {
+      setSaveStatus('Confirm passkey on your device');
       const { envelope } = await buildEnvelopeWithBiometrics(data, {
         displayName: name,
         existingPasswordCipher: prevEnv?.password || (!prevEnv && existing ? existing : null),
@@ -739,6 +741,7 @@ const Wallet: React.FC = () => {
         require2fa: false,
       });
       if (pwd) {
+        setSaveStatus('Encrypting wallet…');
         envelope.password = await encryptWallet(data, pwd);
         envelope.require2fa = require2fa;
       }
@@ -746,6 +749,7 @@ const Wallet: React.FC = () => {
     }
 
     if (pwd) {
+      setSaveStatus('Encrypting wallet…');
       const cipher = await encryptWallet(data, pwd);
       if (prevEnv?.passkey) {
         return serializeEnvelope(
@@ -800,8 +804,9 @@ const Wallet: React.FC = () => {
     }
     if (!walletData) return setModalError('No wallet data available');
     try {
+      setSaveStatus(wantBio ? 'Confirm passkey on your device' : 'Encrypting wallet…');
       setPasskeyBusy(true);
-      await new Promise<void>((resolve) => setTimeout(resolve, 80));
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
       const enc = await persistNamedWallet(walletData, walletName, password || null, {
         withBiometrics: wantBio,
         require2fa: require2faOnCreate,
@@ -861,7 +866,9 @@ const Wallet: React.FC = () => {
     }
     if (!wallet) return setModalError('No wallet available');
     try {
+      setSaveStatus(wantBio ? 'Confirm passkey on your device' : 'Encrypting wallet…');
       setPasskeyBusy(true);
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
       const enc = await persistNamedWallet(requireSessionWallet(), saveWalletName, savePassword || null, {
         withBiometrics: wantBio,
         require2fa: require2faOnSave,
@@ -2020,6 +2027,45 @@ const Wallet: React.FC = () => {
 
             {modalError && <Text style={styles.error}>{modalError}</Text>}
           </ScrollView>
+          {passkeyBusy ? (
+            <View
+              pointerEvents="auto"
+              style={{
+                position: 'absolute',
+                top: 0,
+                right: 0,
+                bottom: 0,
+                left: 0,
+                backgroundColor: 'rgba(9, 9, 11, 0.82)',
+                alignItems: 'center',
+                justifyContent: 'center',
+                paddingHorizontal: 24,
+              }}
+            >
+              <ActivityIndicator size="large" color={defiColors.goldHover} />
+              <Text
+                style={{
+                  color: theme.colors.textPrimary,
+                  marginTop: 16,
+                  textAlign: 'center',
+                  fontSize: 16,
+                  fontWeight: '600',
+                }}
+              >
+                {saveStatus}
+              </Text>
+              <Text
+                style={{
+                  color: theme.colors.textSecondary,
+                  marginTop: 8,
+                  textAlign: 'center',
+                  fontSize: 13,
+                }}
+              >
+                Keep the app open until this finishes.
+              </Text>
+            </View>
+          ) : null}
         </View>
       </Modal>
 
@@ -2084,9 +2130,38 @@ const Wallet: React.FC = () => {
               </Text>
             </TouchableOpacity>
             {modalError && <Text style={styles.error}>{modalError}</Text>}
-            <TouchableOpacity onPress={() => { setShowSaveModal(false); setModalError(null); setSaveWalletName(''); setSavePassword(''); setSaveConfirmPassword(''); setLogoutAfterSave(false); }}>
+            <TouchableOpacity onPress={() => { setShowSaveModal(false); setModalError(null); setSaveWalletName(''); setSavePassword(''); setSaveConfirmPassword(''); setLogoutAfterSave(false); }} disabled={passkeyBusy}>
               <Text style={modalCloseStyle}>Close</Text>
             </TouchableOpacity>
+            {passkeyBusy ? (
+              <View
+                pointerEvents="auto"
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  right: 0,
+                  bottom: 0,
+                  left: 0,
+                  backgroundColor: 'rgba(9, 9, 11, 0.82)',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  paddingHorizontal: 24,
+                }}
+              >
+                <ActivityIndicator size="large" color={defiColors.goldHover} />
+                <Text
+                  style={{
+                    color: theme.colors.textPrimary,
+                    marginTop: 16,
+                    textAlign: 'center',
+                    fontSize: 16,
+                    fontWeight: '600',
+                  }}
+                >
+                  {saveStatus}
+                </Text>
+              </View>
+            ) : null}
           </View>
         </View>
       </Modal>
