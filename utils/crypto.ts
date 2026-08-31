@@ -114,8 +114,68 @@ export const importWallet = (privateKey: string): WalletData => {
   return accountToWalletData(account);
 };
 
-export const WALLET_CRYPTO_VERSION = 2;
+export const WALLET_CRYPTO_VERSION = 3;
 const PBKDF2_ITERATIONS = 210_000;
+
+function b64(bytes: Uint8Array): string {
+  let bin = '';
+  bytes.forEach((b) => {
+    bin += String.fromCharCode(b);
+  });
+  return globalThis.btoa(bin);
+}
+function unb64(s: string): Uint8Array {
+  const bin = globalThis.atob(s);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+async function encryptV3(plaintext: string, password: string): Promise<string> {
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) return encryptV2(plaintext, password);
+  const enc = new TextEncoder();
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const base = await subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveKey']);
+  const key = await subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
+    base,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt'],
+  );
+  const ct = new Uint8Array(await subtle.encrypt({ name: 'AES-GCM', iv }, key, enc.encode(plaintext)));
+  return JSON.stringify({
+    v: 3,
+    kdf: 'pbkdf2-sha256',
+    alg: 'aes-256-gcm',
+    iter: PBKDF2_ITERATIONS,
+    salt: b64(salt),
+    iv: b64(iv),
+    ct: b64(ct),
+  });
+}
+
+async function decryptV3(envelope: { iter?: number; salt: string; iv: string; ct: string }, password: string): Promise<WalletData> {
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) throw new Error('Wrong password or invalid encrypted data');
+  const iterations = Number(envelope.iter) > 0 ? Number(envelope.iter) : PBKDF2_ITERATIONS;
+  const base = await subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
+  const key = await subtle.deriveKey(
+    { name: 'PBKDF2', salt: unb64(envelope.salt) as BufferSource, iterations, hash: 'SHA-256' },
+    base,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['decrypt'],
+  );
+  const pt = await subtle.decrypt(
+    { name: 'AES-GCM', iv: unb64(envelope.iv) as BufferSource },
+    key,
+    unb64(envelope.ct) as BufferSource,
+  );
+  return JSON.parse(new TextDecoder().decode(pt));
+}
 
 function encryptV2(plaintext: string, password: string): string {
   const salt = CryptoJS.lib.WordArray.random(16);
@@ -131,7 +191,7 @@ function encryptV2(plaintext: string, password: string): string {
     padding: CryptoJS.pad.Pkcs7,
   });
   return JSON.stringify({
-    v: WALLET_CRYPTO_VERSION,
+    v: 2,
     kdf: 'pbkdf2-sha256',
     iter: PBKDF2_ITERATIONS,
     salt: CryptoJS.enc.Base64.stringify(salt),
@@ -160,12 +220,12 @@ function decryptV2(envelope: { iter?: number; salt: string; iv: string; ct: stri
   return JSON.parse(decryptedStr);
 }
 
-export const encryptWallet = (walletData: WalletData, password: string): string => {
+export const encryptWallet = async (walletData: WalletData, password: string): Promise<string> => {
   if (!password) throw new Error('Password is required');
-  return encryptV2(JSON.stringify(walletData), password);
+  return encryptV3(JSON.stringify(walletData), password);
 };
 
-export const decryptWallet = (encrypted: string, password: string): WalletData => {
+export const decryptWallet = async (encrypted: string, password: string): Promise<WalletData> => {
   try {
     if (!password) throw new Error('Wrong password or invalid encrypted data');
     const cipher = getPasswordCipherFromBlob(encrypted);
@@ -178,8 +238,11 @@ export const decryptWallet = (encrypted: string, password: string): WalletData =
     if (inner.startsWith('{')) {
       try {
         const envelope = JSON.parse(inner);
-        if (envelope && Number(envelope.v) === 2 && envelope.ct && envelope.salt && envelope.iv) {
-          return decryptV2(envelope, password);
+        if (envelope && envelope.ct && envelope.salt && envelope.iv) {
+          if (Number(envelope.v) === 3 || envelope.alg === 'aes-256-gcm') {
+            return await decryptV3(envelope, password);
+          }
+          if (Number(envelope.v) === 2) return decryptV2(envelope, password);
         }
       } catch (err: any) {
         if (err?.message && /Wrong password|Invalid password/i.test(err.message)) throw err;

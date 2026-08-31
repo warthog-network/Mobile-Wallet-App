@@ -21,6 +21,7 @@ import {
 import { isValidAddress } from './crypto';
 import { normalizeAssetHash, isValidAssetHash } from './warthogFormat';
 import type { WalletData } from '../types';
+import { getSessionPrivateKey } from './sessionVault';
 
 function parseRecipientAddress(raw: string): Address | null {
   const trimmed = raw.trim().replace(/^0x/i, '');
@@ -42,7 +43,7 @@ export async function signAndSubmitDefiTx(
   const nonce = NonceId.fromNumber(nonceId);
   if (!nonce) throw new Error('Invalid nonce');
 
-  const account = Account.fromPrivateKeyHex(wallet.privateKey);
+  const account = Account.fromPrivateKeyHex(getSessionPrivateKey());
   const ctx = await createTxContext(node, roundedFee, nonce);
   const tx = buildTx(ctx, account);
   const result = await submitWarthogTransaction(node, tx);

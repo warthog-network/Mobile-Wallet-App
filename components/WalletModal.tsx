@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, Modal, TouchableOpacity, ScrollView, Share } fr
 import { Card } from './Card';
 import { Button } from './Button';
 import { theme } from '../theme';
+import { getSessionMnemonic, getSessionPrivateKey } from '../utils/sessionVault';
 
 interface WalletModalProps {
   visible: boolean;
@@ -33,11 +34,11 @@ export const WalletModal: React.FC<WalletModalProps> = ({
   };
 
   const sharePrivateKey = () => {
-    handleShare(wallet.privateKey, 'Warthog Private Key (Keep Secure!)');
+    handleShare(getSessionPrivateKey(), 'Warthog Private Key (Keep Secure!)');
   };
 
   const shareMnemonic = () => {
-    handleShare(wallet.mnemonic, 'Warthog Mnemonic Phrase (Keep Secure!)');
+    handleShare(getSessionMnemonic() || '', 'Warthog Mnemonic Phrase (Keep Secure!)');
   };
 
   return (
@@ -84,7 +85,7 @@ export const WalletModal: React.FC<WalletModalProps> = ({
                 </Text>
                 <View style={styles.valueContainer}>
                   <Text style={styles.valueText} selectable>
-                    {wallet.privateKey}
+                    {getSessionPrivateKey()}
                   </Text>
                 </View>
                 <Button

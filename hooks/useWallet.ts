@@ -95,7 +95,7 @@ export const useWallet = () => {
           if (!password) return setError('Password is required');
           const encryptedWallet = await storage.getItemAsync(SECURE_STORE_KEYS.wallet(walletName));
           if (!encryptedWallet) return setError('No wallet found. Please create or import a wallet.');
-          newWallet = decryptWallet(encryptedWallet, password);
+          newWallet = await decryptWallet(encryptedWallet, password);
           setCurrentWalletName(walletName);
           break;
         }
@@ -124,7 +124,7 @@ export const useWallet = () => {
   const saveWallet = async (walletToSave: WalletData, walletPassword: string, name: string) => {
     try {
       const trimmed = await persistWalletName(name);
-      const encryptedWallet = encryptWallet(walletToSave, walletPassword);
+      const encryptedWallet = await encryptWallet(walletToSave, walletPassword);
       await storage.setItemAsync(SECURE_STORE_KEYS.wallet(trimmed), encryptedWallet);
     } catch (err: any) {
       console.error('Error saving wallet:', err);

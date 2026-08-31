@@ -89,7 +89,8 @@ export const useSendTransaction = (
         throw new Error('Invalid nonce');
       }
 
-      const account = Account.fromPrivateKeyHex(wallet.privateKey);
+      const { getSessionPrivateKey } = await import('../utils/sessionVault');
+      const account = Account.fromPrivateKeyHex(getSessionPrivateKey());
       const ctx = await createTxContext(selectedNode, roundedFee, nonce);
       const tx = ctx.transferWart(account, recipient, wartAmount);
       const result = await submitWarthogTransaction(selectedNode, tx);

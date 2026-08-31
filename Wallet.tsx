@@ -19,6 +19,7 @@ import {
   RefreshControl,
   ActivityIndicator,
   Platform,
+  AppState,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
@@ -69,6 +70,13 @@ import {
 import SpendableBalanceDisplay from './components/SpendableBalanceDisplay';
 import SpendConfirm from './components/SpendConfirm';
 import { toast } from './utils/toast';
+import {
+  clearSessionKeys,
+  getSessionPrivateKey,
+  publicWallet,
+  requireSessionWallet,
+  setSessionKeys,
+} from './utils/sessionVault';
 import { theme } from './theme';
 
 const styles = StyleSheet.create({
@@ -486,7 +494,17 @@ const Wallet: React.FC = () => {
     performLogout();
   };
 
+  const commitUnlockedWallet = (data: WalletData, name?: string) => {
+    setSessionKeys(data);
+    setWallet(publicWallet(data));
+    setWalletData(null);
+    if (name) setCurrentWalletName(name);
+    setIsLoggedIn(true);
+    fetchBalanceAndNonce(data.address);
+  };
+
   const performLogout = () => {
+    clearSessionKeys();
     setWallet(null);
     setCurrentWalletName('');
     setIsLoggedIn(false);
@@ -513,6 +531,7 @@ const Wallet: React.FC = () => {
               const updatedNames = savedWalletNames.filter(name => name !== currentWalletName);
               setSavedWalletNames(updatedNames);
               await storage.setItemAsync(SECURE_STORE_KEYS.walletNames, JSON.stringify(updatedNames));
+              clearSessionKeys();
               setWallet(null);
               setCurrentWalletName('');
               setIsLoggedIn(false);
@@ -587,6 +606,18 @@ const Wallet: React.FC = () => {
       setError(e.message);
     }
   }, [selectedNode]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'background') {
+        clearSessionKeys();
+        setWallet(null);
+        setWalletData(null);
+        setIsLoggedIn(false);
+      }
+    });
+    return () => sub.remove();
+  }, []);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -698,7 +729,7 @@ const Wallet: React.FC = () => {
 
     const existing = await storage.getItemAsync(SECURE_STORE_KEYS.wallet(name));
     const prevEnv = existing ? tryParseEnvelope(existing) : null;
-    let passwordCipher: string | null = pwd ? encryptWallet(data, pwd) : null;
+    let passwordCipher: string | null = pwd ? await encryptWallet(data, pwd) : null;
     if (!passwordCipher && prevEnv?.password) passwordCipher = prevEnv.password;
     if (!passwordCipher && existing && !prevEnv) passwordCipher = existing;
 
@@ -710,14 +741,14 @@ const Wallet: React.FC = () => {
         require2fa: require2fa && Boolean(passwordCipher || pwd),
       });
       if (require2fa && pwd) {
-        envelope.password = encryptWallet(data, pwd);
+        envelope.password = await encryptWallet(data, pwd);
         envelope.require2fa = true;
       }
       return serializeEnvelope(envelope);
     }
 
     if (pwd) {
-      const cipher = encryptWallet(data, pwd);
+      const cipher = await encryptWallet(data, pwd);
       if (prevEnv?.passkey) {
         return serializeEnvelope(
           envelopeWithPassword(data, cipher, prevEnv, { require2fa }),
@@ -782,12 +813,9 @@ const Wallet: React.FC = () => {
         : [...savedWalletNames, walletName];
       setSavedWalletNames(updatedNames);
       await storage.setItemAsync(SECURE_STORE_KEYS.walletNames, JSON.stringify(updatedNames));
-      setWallet(walletData);
-      setCurrentWalletName(walletName);
-      setIsLoggedIn(true);
+      commitUnlockedWallet(walletData, walletName);
       setShowModal(false);
       setAccessPath('hub');
-      fetchBalanceAndNonce(walletData.address);
       setPassword('');
       setConfirmPassword('');
       setWalletName('');
@@ -808,11 +836,9 @@ const Wallet: React.FC = () => {
       return setModalError('Confirm you have written down your seed phrase before closing');
     }
     if (!walletData) return setModalError('No wallet data available');
-    setWallet(walletData);
-    setIsLoggedIn(true);
+    commitUnlockedWallet(walletData);
     setShowModal(false);
     setAccessPath('hub');
-    fetchBalanceAndNonce(walletData.address);
     setPassword('');
     setConfirmPassword('');
     setConsentToClose(false);
@@ -837,7 +863,7 @@ const Wallet: React.FC = () => {
     if (!wallet) return setModalError('No wallet available');
     try {
       setPasskeyBusy(true);
-      const enc = await persistNamedWallet(wallet, saveWalletName, savePassword || null, {
+      const enc = await persistNamedWallet(requireSessionWallet(), saveWalletName, savePassword || null, {
         withBiometrics: wantBio,
         require2fa: require2faOnSave,
       });
@@ -877,7 +903,7 @@ const Wallet: React.FC = () => {
     const pwd = opts?.password?.trim() || null;
     try {
       setPasskeyBusy(true);
-      const enc = await persistNamedWallet(wallet, tag, pwd, {
+      const enc = await persistNamedWallet(requireSessionWallet(), tag, pwd, {
         withBiometrics: true,
         require2fa: want2fa,
       });
@@ -961,7 +987,7 @@ const Wallet: React.FC = () => {
     if (getPasswordStrength(downloadPassword).level < 3) return setModalError('Password is too weak. Must be at least Good strength.');
     if (!wallet) return setModalError('No wallet available');
     try {
-      const enc = encryptWallet(wallet, downloadPassword);
+      const enc = await encryptWallet(requireSessionWallet(), downloadPassword);
       
       if (Platform.OS === 'web') {
         const blob = new Blob([enc], { type: 'text/plain' });
@@ -993,7 +1019,7 @@ const Wallet: React.FC = () => {
     if (password !== confirmPassword) return setModalError('Passwords do not match');
     if (!walletData) return setModalError('No wallet data available');
     try {
-      const enc = encryptWallet(walletData, password);
+      const enc = await encryptWallet(walletData, password);
       
       if (Platform.OS === 'web') {
         const blob = new Blob([enc], { type: 'text/plain' });
@@ -1020,10 +1046,7 @@ const Wallet: React.FC = () => {
   };
 
   const activateLoggedInWallet = (data: WalletData, name: string) => {
-    setWallet(data);
-    setCurrentWalletName(name);
-    setIsLoggedIn(true);
-    fetchBalanceAndNonce(data.address);
+    commitUnlockedWallet(data, name);
     setPassword('');
     setSelectedWalletToLogin('');
     setShowWalletSelection(false);
@@ -1059,7 +1082,7 @@ const Wallet: React.FC = () => {
     }
     if (!password) return setError('Enter password');
     try {
-      const data = decryptWallet(enc, password);
+      const data = await decryptWallet(enc, password);
       activateLoggedInWallet(data, name);
     } catch (e: any) {
       setError('Wrong password: ' + e.message);
@@ -1117,10 +1140,8 @@ const Wallet: React.FC = () => {
   const loginFromFile = async () => {
     if (!uploadedFileContent || !password) return setError('No file or password');
     try {
-      const data = decryptWallet(uploadedFileContent, password);
-      setWallet(data);
-      setIsLoggedIn(true);
-      fetchBalanceAndNonce(data.address);
+      const data = await decryptWallet(uploadedFileContent, password);
+      commitUnlockedWallet(data);
       setUploadedFileContent(null);
       setPassword('');
       toast.success('Logged in from file');
@@ -1132,10 +1153,8 @@ const Wallet: React.FC = () => {
   const loginFromWalletQr = async () => {
     if (!scannedWalletPayload || !password) return setError('Scan a wallet QR and enter the export password');
     try {
-      const data = decryptWallet(scannedWalletPayload, password);
-      setWallet(data);
-      setIsLoggedIn(true);
-      fetchBalanceAndNonce(data.address);
+      const data = await decryptWallet(scannedWalletPayload, password);
+      commitUnlockedWallet(data);
       setScannedWalletPayload(null);
       setPassword('');
       toast.success('Imported', 'Wallet loaded from QR — consider saving it to this device.');
@@ -1202,7 +1221,7 @@ const Wallet: React.FC = () => {
       const nonce = NonceId.fromNumber(nonceId);
       if (!nonce) throw new Error('Invalid nonce');
 
-      const account = Account.fromPrivateKeyHex(wallet.privateKey);
+      const account = Account.fromPrivateKeyHex(getSessionPrivateKey());
       // Use normalized pin (mainnet flat + DeFi nested) — do not rely on nested-only chainHead
       const ctx = await createTxContext(selectedNode, roundedFee, nonce);
       const tx = ctx.transferWart(account, recipient, wartAmount);
@@ -2135,7 +2154,7 @@ const Wallet: React.FC = () => {
                 <StyledTextInput placeholder={DEFAULT_FEE} value={fee} onChangeText={setFee} keyboardType="numeric" />
                 <TouchableOpacity
                   style={[styles.bigButton, styles.bigButtonPrimary]}
-                  onPress={handleSend}
+                  onPress={() => void handleSend(false)}
                   disabled={sending}
                 >
                   <Text style={styles.bigButtonPrimaryText}>{sending ? 'Sending…' : 'Send'}</Text>

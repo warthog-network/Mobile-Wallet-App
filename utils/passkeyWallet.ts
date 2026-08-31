@@ -32,8 +32,8 @@ export type PasskeyBlock = {
   ciphertext: string;
   transports?: string[];
   platformPreferred?: boolean;
-  /** Mobile uses CryptoJS AES with a SecureStore-held key. */
-  mobileCrypto?: 'cryptojs-aes';
+  /** Device-key wrap: AES-GCM (v3) or legacy CryptoJS AES. */
+  mobileCrypto?: 'aes-256-gcm' | 'cryptojs-aes';
 };
 
 export type WalletEnvelope = {
@@ -225,6 +225,96 @@ function deviceKeyStoreId(credentialId: string): string {
   return `${DEVICE_KEY_PREFIX}${safe}`;
 }
 
+function b64(bytes: Uint8Array): string {
+  let bin = '';
+  bytes.forEach((b) => {
+    bin += String.fromCharCode(b);
+  });
+  return globalThis.btoa(bin);
+}
+
+function unb64(s: string): Uint8Array {
+  const bin = globalThis.atob(s);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  const clean = hex.replace(/^0x/i, '');
+  const out = new Uint8Array(clean.length / 2);
+  for (let i = 0; i < out.length; i++) {
+    out[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+  }
+  return out;
+}
+
+async function encryptWithDeviceKey(plaintext: string, deviceKeyHex: string): Promise<{
+  ciphertext: string;
+  mobileCrypto: PasskeyBlock['mobileCrypto'];
+}> {
+  const subtle = globalThis.crypto?.subtle;
+  if (subtle) {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const key = await subtle.importKey(
+      'raw',
+      hexToBytes(deviceKeyHex) as BufferSource,
+      'AES-GCM',
+      false,
+      ['encrypt'],
+    );
+    const ct = new Uint8Array(
+      await subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(plaintext)),
+    );
+    return {
+      ciphertext: JSON.stringify({
+        v: 3,
+        alg: 'aes-256-gcm',
+        iv: b64(iv),
+        ct: b64(ct),
+      }),
+      mobileCrypto: 'aes-256-gcm',
+    };
+  }
+  return {
+    ciphertext: CryptoJS.AES.encrypt(plaintext, deviceKeyHex).toString(),
+    mobileCrypto: 'cryptojs-aes',
+  };
+}
+
+async function decryptWithDeviceKey(
+  ciphertext: string,
+  deviceKeyHex: string,
+  mobileCrypto?: PasskeyBlock['mobileCrypto'],
+): Promise<string> {
+  const inner = String(ciphertext || '').trim();
+  const wantGcm =
+    mobileCrypto === 'aes-256-gcm' ||
+    (inner.startsWith('{') && /aes-256-gcm/.test(inner));
+  if (wantGcm) {
+    const subtle = globalThis.crypto?.subtle;
+    if (!subtle) throw new Error('decrypt failed');
+    const envelope = JSON.parse(inner) as { iv: string; ct: string };
+    const key = await subtle.importKey(
+      'raw',
+      hexToBytes(deviceKeyHex) as BufferSource,
+      'AES-GCM',
+      false,
+      ['decrypt'],
+    );
+    const pt = await subtle.decrypt(
+      { name: 'AES-GCM', iv: unb64(envelope.iv) as BufferSource },
+      key,
+      unb64(envelope.ct) as BufferSource,
+    );
+    return new TextDecoder().decode(pt);
+  }
+  const bytes = CryptoJS.AES.decrypt(inner, deviceKeyHex);
+  const decrypted = bytes.toString(CryptoJS.enc.Utf8);
+  if (!decrypted) throw new Error('decrypt failed');
+  return decrypted;
+}
+
 /**
  * Encrypt wallet under a new biometric-gated device key.
  */
@@ -239,10 +329,7 @@ export async function encryptWithNewBiometrics(
   const credentialId = randomHex(16);
   const deviceKey = randomHex(32);
   const payload = walletPayload(walletData);
-  const ciphertext = CryptoJS.AES.encrypt(
-    JSON.stringify(payload),
-    deviceKey,
-  ).toString();
+  const wrapped = await encryptWithDeviceKey(JSON.stringify(payload), deviceKey);
 
   await SecureStore.setItemAsync(deviceKeyStoreId(credentialId), deviceKey, {
     keychainService: 'warthog-wallet',
@@ -257,10 +344,10 @@ export async function encryptWithNewBiometrics(
       credentialId,
       rpId: 'mobile',
       mode: 'device',
-      ciphertext,
+      ciphertext: wrapped.ciphertext,
       transports: ['internal'],
       platformPreferred: true,
-      mobileCrypto: 'cryptojs-aes',
+      mobileCrypto: wrapped.mobileCrypto,
     },
   };
 }
@@ -306,9 +393,11 @@ export async function decryptWithBiometrics(
   }
 
   try {
-    const bytes = CryptoJS.AES.decrypt(passkeyBlock.ciphertext, deviceKey);
-    const decrypted = bytes.toString(CryptoJS.enc.Utf8);
-    if (!decrypted) throw new Error('decrypt failed');
+    const decrypted = await decryptWithDeviceKey(
+      passkeyBlock.ciphertext,
+      deviceKey,
+      passkeyBlock.mobileCrypto,
+    );
     const data = JSON.parse(decrypted) as WalletData;
     if (!data?.privateKey || !data?.address) {
       throw new Error('Decrypted wallet data is invalid');
@@ -403,7 +492,10 @@ export function envelopeWithPassword(
 export async function unlockEnvelopeWith2fa(
   envelope: WalletEnvelope,
   password: string,
-  decryptPasswordFn: (cipher: string, password: string) => WalletData,
+  decryptPasswordFn: (
+    cipher: string,
+    password: string,
+  ) => WalletData | Promise<WalletData>,
 ): Promise<WalletData> {
   if (!envelope?.password || !envelope?.passkey) {
     throw new Error('2FA unlock needs both password and biometrics on this wallet');
@@ -412,7 +504,7 @@ export async function unlockEnvelopeWith2fa(
 
   let fromPassword: WalletData;
   try {
-    fromPassword = decryptPasswordFn(envelope.password, password);
+    fromPassword = await decryptPasswordFn(envelope.password, password);
   } catch {
     throw new Error('Invalid password');
   }
