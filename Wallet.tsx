@@ -1719,6 +1719,25 @@ const Wallet: React.FC = () => {
           <DefiNavTabs activeId={defiActiveTab} tabs={navTabs} />
 
           {isDefi && (
+            <DexModal
+              embedded
+              visible
+              allowedModes={['market']}
+              onClose={() => {}}
+              wallet={wallet}
+              selectedNode={selectedNode}
+              nextNonce={nextNonce}
+              poolPrefill={null}
+              onPrefillConsumed={() => {}}
+              onSuccess={afterSpendSuccess}
+              assetBalances={defi.orderedAssets}
+              wartAvailable={balanceAvailable}
+              wartLocked={balanceLocked}
+              wartTotal={balance}
+            />
+          )}
+
+          {isDefi && (
             <DefiOverviewSection
               wallet={wallet}
               selectedNode={selectedNode}

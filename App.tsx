@@ -1,7 +1,7 @@
 // App.tsx
 import React, { useState } from 'react';
 import { View, Text, ScrollView, RefreshControl, StyleSheet, StatusBar } from 'react-native';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Wallet from './Wallet';
 import TropicalBackground from './components/TropicalBackground';
 import { NumberDisplayProvider } from './contexts/NumberDisplayContext';
@@ -31,42 +31,55 @@ const svgContent = `<?xml version="1.0" encoding="utf-8"?>
 </g>
 </svg>`;
 
-export default function App() {
+function AppScroll() {
+  const insets = useSafeAreaInsets();
   const [refreshing, setRefreshing] = useState(false);
 
   const onRefresh = () => {
     setRefreshing(true);
-    // We'll connect real refresh later
     setTimeout(() => setRefreshing(false), 800);
   };
 
   return (
+    <TropicalBackground>
+      <StatusBar barStyle="light-content" backgroundColor="#040404" />
+
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={[
+          styles.scrollContent,
+          {
+            paddingTop: Math.max(insets.top, 12) + 8,
+            // Clear Android/iOS system nav / home indicator so Liquidity isn't covered.
+            paddingBottom: Math.max(insets.bottom, 16) + 48,
+          },
+        ]}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            colors={['#E79300']}
+            tintColor="#E79300"
+          />
+        }
+      >
+        <View style={styles.header}>
+          <SvgXml xml={svgContent} width={300} height={111} />
+          <Text style={styles.title}>WARTHOG WALLET</Text>
+          <Text style={styles.subtitle}>Android + iOS • Production Ready</Text>
+        </View>
+
+        <Wallet />
+      </ScrollView>
+    </TropicalBackground>
+  );
+}
+
+export default function App() {
+  return (
     <SafeAreaProvider>
       <NumberDisplayProvider>
-        <TropicalBackground>
-          <StatusBar barStyle="light-content" backgroundColor="#040404" />
-
-          <ScrollView
-            style={styles.scroll}
-            contentContainerStyle={styles.scrollContent}
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={onRefresh}
-                colors={['#E79300']}
-                tintColor="#E79300"
-              />
-            }
-          >
-            <View style={styles.header}>
-              <SvgXml xml={svgContent} width={300} height={111} />
-              <Text style={styles.title}>WARTHOG WALLET</Text>
-              <Text style={styles.subtitle}>Android + iOS • Production Ready</Text>
-            </View>
-
-            <Wallet />
-          </ScrollView>
-        </TropicalBackground>
+        <AppScroll />
       </NumberDisplayProvider>
     </SafeAreaProvider>
   );
@@ -78,8 +91,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   scrollContent: {
-    padding: 7,
-    paddingTop: 27,
+    paddingHorizontal: 7,
     minHeight: '100%',
   },
   header: {

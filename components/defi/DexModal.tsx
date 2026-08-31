@@ -53,6 +53,10 @@ interface Props {
   wartAvailable?: string;
   wartLocked?: string;
   wartTotal?: string;
+  /** Inline on overview (no overlay). */
+  embedded?: boolean;
+  /** Limit which DEX modes are shown. Overview uses market swap only. */
+  allowedModes?: OrderMode[];
 }
 
 type OrderMode = 'market' | 'limit' | 'pool';
@@ -105,8 +109,16 @@ const DexModal: React.FC<Props> = ({
   wartAvailable,
   wartLocked,
   wartTotal,
+  embedded = false,
+  allowedModes,
 }) => {
-  const [orderMode, setOrderMode] = useState<OrderMode>('market');
+  const modesKey = (allowedModes?.length ? allowedModes : ['market', 'limit', 'pool']).join(',');
+  const modes = useMemo<OrderMode[]>(
+    () => (modesKey.split(',') as OrderMode[]),
+    [modesKey],
+  );
+  const [orderMode, setOrderMode] = useState<OrderMode>(modes[0] || 'market');
+  const isLive = embedded || visible;
   const [payingWart, setPayingWart] = useState(true);
   const [selectedAsset, setSelectedAsset] = useState<TokenOption | null>(null);
   const [payAmount, setPayAmount] = useState('');
@@ -208,9 +220,15 @@ const DexModal: React.FC<Props> = ({
     [selectedNode, wallet.address]
   );
 
+  useEffect(() => {
+    if (!modes.includes(orderMode)) {
+      setOrderMode(modes[0] || 'market');
+    }
+  }, [modes, orderMode]);
+
   // Prefill from overview "Manage in DEX"
   useEffect(() => {
-    if (!visible || !poolPrefill?.hash) return;
+    if (!isLive || !poolPrefill?.hash) return;
     const hash = normalizeAssetHash(poolPrefill.hash);
     const match = tokenOptions.find((t) => t.hash === hash);
     setSelectedAsset(
@@ -229,22 +247,22 @@ const DexModal: React.FC<Props> = ({
     setLiqMode('deposit');
     onPrefillConsumed();
     void loadMarket(hash);
-  }, [visible, poolPrefill, onPrefillConsumed, loadMarket, tokenOptions]);
+  }, [isLive, poolPrefill, onPrefillConsumed, loadMarket, tokenOptions]);
 
   // Default token when opening without prefill
   useEffect(() => {
-    if (!visible) return;
+    if (!isLive) return;
     if (!selectedAsset && tokenOptions.length > 0) {
       setSelectedAsset(tokenOptions[0]);
       setAssetDecimals(tokenOptions[0].decimals);
       setManualHashInput(tokenOptions[0].hash);
     }
-  }, [visible, selectedAsset, tokenOptions]);
+  }, [isLive, selectedAsset, tokenOptions]);
 
   useEffect(() => {
-    if (!visible || !assetHash) return;
+    if (!isLive || !assetHash) return;
     void loadMarket(assetHash);
-  }, [visible, assetHash, loadMarket]);
+  }, [isLive, assetHash, loadMarket]);
 
   const refreshPaySpendable = useCallback(async (): Promise<PaySpendable | null> => {
     if (!wallet?.address || !selectedNode) {
@@ -333,12 +351,12 @@ const DexModal: React.FC<Props> = ({
   ]);
 
   useEffect(() => {
-    if (!visible || orderMode === 'pool') return;
+    if (!isLive || orderMode === 'pool') return;
     const t = setTimeout(() => {
       void refreshPaySpendable();
     }, 200);
     return () => clearTimeout(t);
-  }, [visible, orderMode, refreshPaySpendable]);
+  }, [isLive, orderMode, refreshPaySpendable]);
 
   const displayPayAvailable = useMemo(() => {
     if (paySpendable) return paySpendable;
@@ -636,18 +654,23 @@ const DexModal: React.FC<Props> = ({
 
   return (
     <DefiModalShell
-      visible={visible}
+      visible={isLive}
       onClose={onClose}
       title="DEX"
       subtitle="Market · Limit · Pool — swap interface"
+      embedded={embedded}
+      showClose={!embedded}
     >
       {/* Mode tabs */}
+      {modes.length > 1 ? (
       <View style={styles.modeTabs}>
         {([
           { id: 'market' as const, label: 'Market' },
           { id: 'limit' as const, label: 'Limit' },
           { id: 'pool' as const, label: 'Pool' },
-        ]).map((t) => (
+        ] as const)
+          .filter((t) => modes.includes(t.id))
+          .map((t) => (
           <TouchableOpacity
             key={t.id}
             style={[styles.modeTab, orderMode === t.id && styles.modeTabActive]}
@@ -662,6 +685,7 @@ const DexModal: React.FC<Props> = ({
           </TouchableOpacity>
         ))}
       </View>
+      ) : null}
 
       {/* Pool */}
       {orderMode === 'pool' && (

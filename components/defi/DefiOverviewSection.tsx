@@ -1,5 +1,5 @@
 import React, { useState, useRef, useMemo } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, Alert, PanResponder } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, Alert, PanResponder, findNodeHandle } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import FormattedNumber from '../FormattedNumber';
 import SpendableBalanceDisplay from '../SpendableBalanceDisplay';
@@ -64,10 +64,14 @@ const DefiOverviewSection: React.FC<Props> = ({
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [dragAssetIndex, setDragAssetIndex] = useState<number | null>(null);
   const [dropAssetIndex, setDropAssetIndex] = useState<number | null>(null);
+  const [ghostTop, setGhostTop] = useState<number | null>(null);
   const cardLayouts = useRef<Record<number, { y: number; height: number }>>({});
   const cardRefs = useRef<Record<number, View | null>>({});
   const dragAssetIndexRef = useRef<number | null>(null);
   const dropAssetIndexRef = useRef<number | null>(null);
+  const listRef = useRef<View | null>(null);
+  const listWindowYRef = useRef(0);
+  const ghostOriginRef = useRef(0);
   const {
     limitOrderBuyStyles,
     limitOrderSellStyles,
@@ -151,6 +155,12 @@ const DefiOverviewSection: React.FC<Props> = ({
 
   const expandAllAssetGroups = () => setCollapsedGroups(new Set());
 
+  const measureListWindow = () => {
+    listRef.current?.measureInWindow((_x, y) => {
+      listWindowYRef.current = y;
+    });
+  };
+
   const measureCardLayout = (index: number) => {
     const ref = cardRefs.current[index];
     if (!ref) return;
@@ -176,14 +186,33 @@ const DefiOverviewSection: React.FC<Props> = ({
     PanResponder.create({
       onStartShouldSetPanResponder: () => reorderableAssetCount > 1 && index < reorderableAssetCount,
       onMoveShouldSetPanResponder: () => reorderableAssetCount > 1 && index < reorderableAssetCount,
-      onPanResponderGrant: () => {
+      onPanResponderGrant: (evt) => {
+        measureListWindow();
         orderedAssets.forEach((_, i) => measureCardLayout(i));
+        const layout = cardLayouts.current[index];
+        const pageY = evt.nativeEvent.pageY;
+        const fallbackTop = (layout?.y ?? pageY) - listWindowYRef.current;
+        ghostOriginRef.current = fallbackTop;
+        setGhostTop(fallbackTop);
+        const card = cardRefs.current[index];
+        const listHandle = findNodeHandle(listRef.current);
+        if (card && listHandle != null) {
+          card.measureLayout(
+            listHandle,
+            (_x, y) => {
+              ghostOriginRef.current = y;
+              setGhostTop(y);
+            },
+            () => undefined,
+          );
+        }
         dragAssetIndexRef.current = index;
         dropAssetIndexRef.current = index;
         setDragAssetIndex(index);
         setDropAssetIndex(index);
       },
-      onPanResponderMove: (evt) => {
+      onPanResponderMove: (evt, gesture) => {
+        setGhostTop(ghostOriginRef.current + gesture.dy);
         const pageY = evt.nativeEvent.pageY;
         const target = findDropIndex(pageY, index);
         dropAssetIndexRef.current = target;
@@ -199,12 +228,14 @@ const DefiOverviewSection: React.FC<Props> = ({
         dropAssetIndexRef.current = null;
         setDragAssetIndex(null);
         setDropAssetIndex(null);
+        setGhostTop(null);
       },
       onPanResponderTerminate: () => {
         dragAssetIndexRef.current = null;
         dropAssetIndexRef.current = null;
         setDragAssetIndex(null);
         setDropAssetIndex(null);
+        setGhostTop(null);
       },
     });
 
@@ -326,9 +357,93 @@ const DefiOverviewSection: React.FC<Props> = ({
     );
   };
 
+  const renderAssetCard = (asset: AssetBalance, index: number, ghost = false) => (
+    <View
+      key={ghost ? `ghost-${asset.hash}` : asset.hash}
+      ref={ghost ? undefined : (ref) => { cardRefs.current[index] = ref; }}
+      onLayout={ghost ? undefined : () => measureCardLayout(index)}
+      style={[
+        defiStyles.card,
+        !ghost && dragAssetIndex === index && defiStyles.cardDragging,
+        !ghost && dropAssetIndex === index && dragAssetIndex !== null && defiStyles.cardDropTarget,
+        ghost && defiStyles.cardGhost,
+      ]}
+    >
+      <View style={defiStyles.row}>
+        <View style={[defiStyles.row, { flex: 1, justifyContent: 'flex-start' }]}>
+          {reorderableAssetCount > 1 && index < reorderableAssetCount ? (
+            <View
+              style={defiStyles.dragHandle}
+              {...(ghost ? {} : dragResponders[index]?.panHandlers)}
+              accessibilityLabel={`Press and hold to reorder ${asset.name}`}
+            >
+              <View style={defiStyles.dragDotGrid}>
+                {Array.from({ length: 9 }).map((_, dot) => (
+                  <View key={dot} style={defiStyles.dragDot} />
+                ))}
+              </View>
+            </View>
+          ) : null}
+          <View style={[defiStyles.assetAvatar, defiStyles.assetAvatarBlue]}>
+            <Text style={defiStyles.assetAvatarText}>
+              {asset.name?.[0]?.toUpperCase() || '?'}
+            </Text>
+          </View>
+          <View style={{ flex: 1, marginLeft: theme.spacing.sm }}>
+            <Text style={defiStyles.cardTitle}>{asset.name}</Text>
+            <TouchableOpacity onPress={() => copyHash(asset.hash, 'Asset hash')} disabled={ghost}>
+              <Text style={defiStyles.cardSub}>
+                {asset.hash.slice(0, 8)}…{asset.hash.slice(-6)}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+        <SpendableBalanceDisplay
+          available={asset.available ?? asset.balance}
+          locked={asset.locked}
+          total={asset.balance}
+          unit={asset.name}
+          layout="row"
+          primaryStyle={defiStyles.balance}
+          unitStyle={defiStyles.balanceUnit}
+        />
+      </View>
+      <View style={[defiStyles.row, { marginTop: theme.spacing.sm, flexWrap: 'wrap' }]}>
+        <TouchableOpacity
+          style={[defiStyles.compactBtn, { flex: 1, minWidth: 90 }]}
+          onPress={() => onSendAsset(asset)}
+          disabled={ghost}
+        >
+          <Text style={defiStyles.compactBtnText}>Send Asset</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[defiStyles.compactBtn, { flex: 1, minWidth: 70 }]}
+          onPress={() => onOpenDex({ hash: asset.hash, name: asset.name })}
+          disabled={ghost}
+        >
+          <Text style={defiStyles.compactBtnText}>DEX</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={defiStyles.compactBtn}
+          onPress={() => copyHash(asset.hash, 'Asset hash')}
+          disabled={ghost}
+        >
+          <Text style={defiStyles.compactBtnTextAccent}>Copy Hash</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={defiStyles.removeBtn}
+          onPress={() => onRemoveAsset(asset.hash)}
+          disabled={ghost}
+        >
+          <Text style={defiStyles.removeBtnText}>×</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
   return (
     <View>
-      <View style={defiStyles.section}>
+      <View style={[defiStyles.section, dragAssetIndex != null && defiStyles.sectionDragging]}>
         <TouchableOpacity
           style={defiStyles.sectionHeaderPressable}
           onPress={() => setShowAssets((v) => !v)}
@@ -352,78 +467,22 @@ const DefiOverviewSection: React.FC<Props> = ({
           {loadingAssets && orderedAssets.length === 0 ? (
             <ActivityIndicator color={theme.colors.primary} />
           ) : orderedAssets.length > 0 ? (
-            orderedAssets.map((asset, index) => (
-              <View
-                key={asset.hash}
-                ref={(ref) => { cardRefs.current[index] = ref; }}
-                onLayout={() => measureCardLayout(index)}
-                style={[
-                  defiStyles.card,
-                  dragAssetIndex === index && defiStyles.cardDragging,
-                  dropAssetIndex === index && dragAssetIndex !== null && defiStyles.cardDropTarget,
-                ]}
-              >
-                <View style={defiStyles.row}>
-                  <View style={[defiStyles.row, { flex: 1, justifyContent: 'flex-start' }]}>
-                    {reorderableAssetCount > 1 && index < reorderableAssetCount ? (
-                      <View
-                        style={defiStyles.dragHandle}
-                        {...dragResponders[index].panHandlers}
-                        accessibilityLabel={`Press and hold to reorder ${asset.name}`}
-                      >
-                        <View style={defiStyles.dragDotGrid}>
-                          {Array.from({ length: 9 }).map((_, dot) => (
-                            <View key={dot} style={defiStyles.dragDot} />
-                          ))}
-                        </View>
-                      </View>
-                    ) : null}
-                    <View style={[defiStyles.assetAvatar, defiStyles.assetAvatarBlue]}>
-                      <Text style={defiStyles.assetAvatarText}>
-                        {asset.name?.[0]?.toUpperCase() || '?'}
-                      </Text>
-                    </View>
-                    <View style={{ flex: 1, marginLeft: theme.spacing.sm }}>
-                      <Text style={defiStyles.cardTitle}>{asset.name}</Text>
-                      <TouchableOpacity onPress={() => copyHash(asset.hash, 'Asset hash')}>
-                        <Text style={defiStyles.cardSub}>
-                          {asset.hash.slice(0, 8)}…{asset.hash.slice(-6)}
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                  <SpendableBalanceDisplay
-                    available={asset.available ?? asset.balance}
-                    locked={asset.locked}
-                    total={asset.balance}
-                    unit={asset.name}
-                    layout="row"
-                    primaryStyle={defiStyles.balance}
-                    unitStyle={defiStyles.balanceUnit}
-                  />
+            <View
+              ref={listRef}
+              collapsable={false}
+              onLayout={measureListWindow}
+              style={defiStyles.assetDragList}
+            >
+              {orderedAssets.map((asset, index) => renderAssetCard(asset, index))}
+              {dragAssetIndex != null && ghostTop != null && orderedAssets[dragAssetIndex] ? (
+                <View
+                  pointerEvents="none"
+                  style={[defiStyles.cardGhostWrap, { top: ghostTop }]}
+                >
+                  {renderAssetCard(orderedAssets[dragAssetIndex], dragAssetIndex, true)}
                 </View>
-                <View style={[defiStyles.row, { marginTop: theme.spacing.sm, flexWrap: 'wrap' }]}>
-                  <TouchableOpacity
-                    style={[defiStyles.compactBtn, { flex: 1, minWidth: 90 }]}
-                    onPress={() => onSendAsset(asset)}
-                  >
-                    <Text style={defiStyles.compactBtnText}>Send Asset</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[defiStyles.compactBtn, { flex: 1, minWidth: 70 }]}
-                    onPress={() => onOpenDex({ hash: asset.hash, name: asset.name })}
-                  >
-                    <Text style={defiStyles.compactBtnText}>DEX</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={defiStyles.compactBtn} onPress={() => copyHash(asset.hash, 'Asset hash')}>
-                    <Text style={defiStyles.compactBtnTextAccent}>Copy Hash</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={defiStyles.removeBtn} onPress={() => onRemoveAsset(asset.hash)}>
-                    <Text style={defiStyles.removeBtnText}>×</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ))
+              ) : null}
+            </View>
           ) : (
             <Text style={defiStyles.emptyText}>No custom tokens tracked yet</Text>
           )}
@@ -629,7 +688,7 @@ const DefiOverviewSection: React.FC<Props> = ({
         ) : null}
       </View>
 
-      <View style={defiStyles.section}>
+      <View style={[defiStyles.section, defiStyles.sectionLiquidity]}>
         <TouchableOpacity
           style={defiStyles.sectionHeaderPressable}
           onPress={async () => {

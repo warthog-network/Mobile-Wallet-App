@@ -13,6 +13,7 @@ import {
 import * as Clipboard from 'expo-clipboard';
 import { Alert } from 'react-native';
 import NumberDisplaySettings from './NumberDisplaySettings';
+import SelectDropdown from '../SelectDropdown';
 import { validateWarthogAddressInput } from '../../utils/warthogFormat';
 import { defiColors, defiStyles } from '../defi/defiStyles';
 import { theme } from '../../theme';
@@ -85,13 +86,6 @@ const ToolsModal: React.FC<Props> = ({
     }
   }, [toolOptions, activeTool]);
 
-  // When security becomes available (async load), open that tab first
-  useEffect(() => {
-    if (visible && showSecurity) {
-      setActiveTool('security');
-    }
-  }, [visible, showSecurity]);
-
   const handleValidateAddress = () => {
     setIsValidating(true);
     try {
@@ -142,28 +136,17 @@ const ToolsModal: React.FC<Props> = ({
           <View style={defiStyles.modalAccent} />
           <Text style={defiStyles.modalTitle}>Tools</Text>
           <Text style={styles.intro}>
-            Enable passkey unlock and optional 2FA under Passkey / 2FA — same idea as wartbunker Tools.
-            Your phone chooses how to confirm (the system prompt names the method).
+            Pick one tool. Passkey / 2FA matches wartbunker — your phone chooses how to confirm.
           </Text>
 
-          <View style={styles.toolTabs}>
-            {toolOptions.map((tool) => (
-              <TouchableOpacity
-                key={tool.id}
-                style={[styles.toolTab, activeTool === tool.id && styles.toolTabActive]}
-                onPress={() => setActiveTool(tool.id)}
-              >
-                <Text
-                  style={[
-                    styles.toolTabText,
-                    activeTool === tool.id && styles.toolTabTextActive,
-                  ]}
-                >
-                  {tool.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
+          <SelectDropdown
+            value={activeTool}
+            options={toolOptions}
+            onChange={setActiveTool}
+            placeholder="Tool"
+            accessibilityLabel="Select tool"
+            style={styles.toolDropdown}
+          />
 
           {activeTool === 'security' && security && onEnableBiometrics ? (
             <View
@@ -353,31 +336,8 @@ const styles = StyleSheet.create({
     marginBottom: theme.spacing.md,
     lineHeight: 18,
   },
-  toolTabs: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: theme.spacing.sm,
+  toolDropdown: {
     marginBottom: theme.spacing.md,
-  },
-  toolTab: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: theme.borderRadius.sm,
-    backgroundColor: 'rgba(39, 39, 42, 0.8)',
-    borderWidth: 1,
-    borderColor: 'rgba(82, 82, 91, 0.5)',
-  },
-  toolTabActive: {
-    backgroundColor: defiColors.goldHover,
-    borderColor: defiColors.goldHover,
-  },
-  toolTabText: {
-    color: defiColors.textSecondary,
-    fontSize: theme.typography.caption,
-    fontWeight: theme.typography.semiBold,
-  },
-  toolTabTextActive: {
-    color: '#fff',
   },
   toolPanel: {
     backgroundColor: defiColors.bgInset,

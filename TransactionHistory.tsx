@@ -13,7 +13,6 @@ import {
   StyleSheet,
   Alert,
   ActivityIndicator,
-  ScrollView,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { useAddressBook } from './components/AddressBook/AddressBookModal';
@@ -31,6 +30,7 @@ import {
 } from './utils/historyFilters';
 import { isDefiNode } from './utils/nodes';
 import { defiColors } from './components/defi/defiStyles';
+import SelectDropdown from './components/SelectDropdown';
 import { theme } from './theme';
 
 interface Props {
@@ -43,6 +43,26 @@ interface Props {
 /** Like wartbunker: client-scan older pages until enough filter matches (node has no type filter). */
 const FILTER_HUNT_MAX_PAGES = 40;
 const FILTER_PAGE_SIZE = 7;
+
+type HistoryCacheEntry = {
+  items: NormalizedHistoryTx[];
+  source: 'indexer' | 'node';
+  hasMore: boolean;
+  fromId: number | string | null;
+  indexerPage: number;
+  pagesLoaded: number;
+};
+
+const historyPageCache = new Map<string, HistoryCacheEntry>();
+const lastFilterByAccount = new Map<string, HistoryFilterId>();
+
+function accountCacheKey(node: string, address: string) {
+  return `${node}::${address.toLowerCase()}`;
+}
+
+function historyCacheKey(node: string, address: string, filter: string) {
+  return `${accountCacheKey(node, address)}::${filter}`;
+}
 
 function mergeHistory(
   prev: NormalizedHistoryTx[],
@@ -89,7 +109,6 @@ const TransactionHistory: React.FC<Props> = ({
   /** Client-side filter hunt: paging older node history until matches (wartbunker parity). */
   const [hunting, setHunting] = useState(false);
   const [visibleCount, setVisibleCount] = useState(FILTER_PAGE_SIZE);
-  const [showTransactions, setShowTransactions] = useState(false);
   const [historyFilter, setHistoryFilter] = useState<HistoryFilterId>('all');
   const [error, setError] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
@@ -212,6 +231,48 @@ const TransactionHistory: React.FC<Props> = ({
     setBlockCounts(updateRewardCounts(items));
   }, []);
 
+  const writeHistoryCache = useCallback(
+    (filter: HistoryFilterId, entry: HistoryCacheEntry) => {
+      const cacheFilter = entry.source === 'node' ? 'all' : filter;
+      historyPageCache.set(historyCacheKey(node, address, cacheFilter), entry);
+    },
+    [address, node],
+  );
+
+  const applyCachedEntry = useCallback(
+    (entry: HistoryCacheEntry) => {
+      requestId.current += 1;
+      huntGen.current += 1;
+      applyFullList(entry.items);
+      historyRef.current = entry.items;
+      historySourceRef.current = entry.source;
+      fromIdRef.current = entry.fromId;
+      hasMoreRef.current = entry.hasMore;
+      pagesLoadedRef.current = entry.pagesLoaded;
+      indexerPageRef.current = entry.indexerPage;
+      setHistorySource(entry.source);
+      setFromId(entry.fromId);
+      setHasMore(entry.hasMore);
+      setPagesLoaded(entry.pagesLoaded);
+      setIndexerPage(entry.indexerPage);
+      setLoading(false);
+      setHunting(false);
+      setError(null);
+    },
+    [applyFullList],
+  );
+
+  const resolveHistoryCache = useCallback(
+    (filter: HistoryFilterId): HistoryCacheEntry | null => {
+      const exact = historyPageCache.get(historyCacheKey(node, address, filter));
+      if (exact) return exact;
+      const all = historyPageCache.get(historyCacheKey(node, address, 'all'));
+      if (all?.source === 'node') return all;
+      return null;
+    },
+    [address, node],
+  );
+
   /**
    * Load history for current filter.
    * Prefer explorer indexer (WartBunker-style server type filters).
@@ -260,6 +321,15 @@ const TransactionHistory: React.FC<Props> = ({
           setIndexerPage(1);
         }
 
+        writeHistoryCache(filter, {
+          items: result.items,
+          source: result.source,
+          hasMore: result.hasMore,
+          fromId: result.source === 'indexer' ? null : result.fromId,
+          indexerPage: result.source === 'indexer' ? result.nextPage ?? 2 : 1,
+          pagesLoaded: 1,
+        });
+
         if (options?.syncWallet && onRefresh) {
           await onRefresh();
         }
@@ -284,7 +354,31 @@ const TransactionHistory: React.FC<Props> = ({
         }
       }
     },
-    [address, node, historyFilter, applyFullList, onRefresh],
+    [address, node, historyFilter, applyFullList, onRefresh, writeHistoryCache],
+  );
+
+  const loadForFilter = useCallback(
+    (filter: HistoryFilterId, opts?: { force?: boolean; syncWallet?: boolean }) => {
+      if (!address) return;
+      lastFilterByAccount.set(accountCacheKey(node, address), filter);
+
+      if (!opts?.force) {
+        const source = historySourceRef.current;
+        if (source === 'node' && historyRef.current.length > 0 && !opts?.syncWallet) {
+          setVisibleCount(FILTER_PAGE_SIZE);
+          return;
+        }
+        const cached = resolveHistoryCache(filter);
+        if (cached) {
+          applyCachedEntry(cached);
+          setVisibleCount(FILTER_PAGE_SIZE);
+          return;
+        }
+      }
+
+      void fetchHistory({ filter, syncWallet: opts?.syncWallet });
+    },
+    [address, node, fetchHistory, resolveHistoryCache, applyCachedEntry],
   );
 
   /**
@@ -391,16 +485,18 @@ const TransactionHistory: React.FC<Props> = ({
     [address, node],
   );
 
-  // Address/node change — full reload on All
+  // Address/node change — restore last filter + cache when revisiting.
   useEffect(() => {
+    if (!address) return;
     skipFilterReloadRef.current = true;
-    setHistoryFilter('all');
-    if (address) void fetchHistory({ filter: 'all' });
+    const remembered = lastFilterByAccount.get(accountCacheKey(node, address)) || 'all';
+    setHistoryFilter(remembered);
+    loadForFilter(remembered);
   }, [address, node]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /**
-   * Filter change: re-query indexer with group=… (WartBunker behavior).
-   * Node fallback still client-hunts after load.
+   * Filter change: reuse cached pages (and node client-filter) instead of refetching.
+   * Indexer still fetches the first time a type is opened.
    */
   useEffect(() => {
     setVisibleCount(FILTER_PAGE_SIZE);
@@ -409,7 +505,7 @@ const TransactionHistory: React.FC<Props> = ({
       skipFilterReloadRef.current = false;
       return;
     }
-    void fetchHistory({ filter: historyFilter });
+    loadForFilter(historyFilter);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [historyFilter]);
 
@@ -452,6 +548,16 @@ const TransactionHistory: React.FC<Props> = ({
         const nextPages = pagesLoadedRef.current + result.pagesFetched;
         pagesLoadedRef.current = nextPages;
         setPagesLoaded(nextPages);
+        if (historySourceRef.current) {
+          writeHistoryCache(historyFilter, {
+            items: result.items,
+            source: historySourceRef.current,
+            hasMore: result.hasMore,
+            fromId: result.fromId,
+            indexerPage: indexerPageRef.current,
+            pagesLoaded: nextPages,
+          });
+        }
       } catch (err: any) {
         if (cancelled || gen !== huntGen.current) return;
         console.warn('Filter hunt failed:', err);
@@ -512,6 +618,16 @@ const TransactionHistory: React.FC<Props> = ({
       pagesLoadedRef.current = nextPages;
       setPagesLoaded(nextPages);
       setVisibleCount(nextVisible);
+      if (historySourceRef.current) {
+        writeHistoryCache(historyFilter, {
+          items: result.items,
+          source: historySourceRef.current,
+          hasMore: result.hasMore,
+          fromId: result.fromId,
+          indexerPage: indexerPageRef.current,
+          pagesLoaded: nextPages,
+        });
+      }
     } catch (err: any) {
       setError(err?.message || 'Failed to load more history');
     } finally {
@@ -527,6 +643,7 @@ const TransactionHistory: React.FC<Props> = ({
     historyFilter,
     historySource,
     applyFullList,
+    writeHistoryCache,
   ]);
 
   const copy = (text: string, label: string) => {
@@ -579,46 +696,21 @@ const TransactionHistory: React.FC<Props> = ({
 
       <View style={styles.buttonRow}>
         <TouchableOpacity
-          onPress={() => fetchHistory({ syncWallet: true })}
+          onPress={() => loadForFilter(historyFilter, { force: true, syncWallet: true })}
           style={styles.actionBtn}
           disabled={loading}
         >
           <Text style={styles.actionBtnText}>{loading ? 'Refreshing…' : 'Refresh'}</Text>
         </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => setShowTransactions(!showTransactions)}
-          style={[styles.actionBtn, showTransactions && styles.actionBtnActive]}
-        >
-          <Text style={[styles.actionBtnText, showTransactions && styles.actionBtnTextActive]}>
-            {showTransactions ? 'Hide Transactions' : 'Show Transactions'}
-          </Text>
-        </TouchableOpacity>
+        <SelectDropdown
+          value={historyFilter}
+          options={filters}
+          onChange={setHistoryFilter}
+          placeholder="Tx type"
+          accessibilityLabel="Transaction type filter"
+          style={styles.filterDropdown}
+        />
       </View>
-
-      {/* Type / direction filters (wartbunker + extension parity) */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.filterRow}
-        style={styles.filterScroll}
-      >
-        {filters.map((f) => {
-          const active = historyFilter === f.id;
-          return (
-            <TouchableOpacity
-              key={f.id}
-              onPress={() => setHistoryFilter(f.id)}
-              style={[styles.filterChip, active && styles.filterChipActive]}
-              accessibilityRole="button"
-              accessibilityState={{ selected: active }}
-            >
-              <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>
-                {f.label}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
       {historyFilter !== 'all' && (history.length > 0 || filterBusy) ? (
         <Text style={styles.filterMeta}>
           {filterBusy
@@ -635,9 +727,7 @@ const TransactionHistory: React.FC<Props> = ({
 
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
-      {showTransactions && (
-        <>
-          {(loading && history.length > 0) || filterBusy ? (
+      {(loading && history.length > 0) || filterBusy ? (
             <View style={styles.refreshingRow}>
               <ActivityIndicator size="small" color={defiColors.goldHover} />
               <Text style={styles.refreshingText}>
@@ -809,8 +899,6 @@ const TransactionHistory: React.FC<Props> = ({
               </Text>
             </TouchableOpacity>
           ) : null}
-        </>
-      )}
     </View>
   );
 };
@@ -834,32 +922,8 @@ const styles = StyleSheet.create({
   networkNote: { color: defiColors.textMuted, fontSize: 11, marginBottom: theme.spacing.sm },
   descriptionValue: { flex: 1, marginLeft: 12, textAlign: 'right' },
   rewardRow: { flexDirection: 'row', gap: theme.spacing.sm, marginBottom: theme.spacing.md, flexWrap: 'wrap' },
-  buttonRow: { flexDirection: 'row', gap: theme.spacing.sm, marginBottom: theme.spacing.sm, flexWrap: 'wrap' },
-  filterScroll: { marginBottom: theme.spacing.sm, maxHeight: 40 },
-  filterRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingVertical: 2,
-  },
-  filterChip: {
-    paddingVertical: 5,
-    paddingHorizontal: 10,
-    borderRadius: theme.borderRadius.sm,
-    backgroundColor: defiColors.bgInset,
-    borderWidth: 1,
-    borderColor: defiColors.borderMuted,
-  },
-  filterChipActive: {
-    backgroundColor: defiColors.goldHover,
-    borderColor: defiColors.goldHover,
-  },
-  filterChipText: {
-    color: defiColors.textSecondary,
-    fontSize: theme.typography.tiny,
-    fontWeight: theme.typography.semiBold,
-  },
-  filterChipTextActive: { color: '#ffffff' },
+  buttonRow: { flexDirection: 'row', gap: theme.spacing.sm, marginBottom: theme.spacing.sm, flexWrap: 'wrap', alignItems: 'center' },
+  filterDropdown: { flex: 1, minWidth: 140 },
   filterMeta: {
     color: defiColors.textMuted,
     fontSize: 11,

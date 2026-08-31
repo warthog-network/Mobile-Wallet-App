@@ -182,6 +182,14 @@ export const defiStyles = StyleSheet.create({
     marginBottom: theme.spacing.md,
     overflow: 'hidden',
   },
+  sectionDragging: {
+    overflow: 'visible',
+    zIndex: 20,
+    elevation: 8,
+  },
+  sectionLiquidity: {
+    marginBottom: theme.spacing.xxxl,
+  },
   sectionHeader: {
     paddingVertical: theme.spacing.md,
     paddingHorizontal: theme.spacing.md,
@@ -246,6 +254,10 @@ export const defiStyles = StyleSheet.create({
     borderColor: 'rgba(245, 158, 11, 0.25)',
   },
   sectionBody: { padding: theme.spacing.md },
+  assetDragList: {
+    position: 'relative',
+    overflow: 'visible',
+  },
   sectionFooter: {
     borderTopWidth: 1,
     borderTopColor: defiColors.borderMuted,
@@ -470,12 +482,31 @@ export const defiStyles = StyleSheet.create({
     opacity: 0.8,
   },
   cardDragging: {
-    opacity: 0.5,
-    borderColor: 'rgba(139, 92, 246, 0.5)',
+    opacity: 0.22,
+    borderColor: 'rgba(139, 92, 246, 0.4)',
+    borderStyle: 'dashed',
   },
   cardDropTarget: {
+    borderColor: 'rgba(139, 92, 246, 0.9)',
+    backgroundColor: 'rgba(76, 29, 149, 0.22)',
+  },
+  cardGhostWrap: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    zIndex: 40,
+    elevation: 16,
+  },
+  cardGhost: {
+    opacity: 0.96,
     borderColor: 'rgba(139, 92, 246, 0.8)',
-    backgroundColor: 'rgba(76, 29, 149, 0.15)',
+    backgroundColor: defiColors.bgCard,
+    shadowColor: '#000',
+    shadowOpacity: 0.45,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 16,
+    transform: [{ scale: 1.02 }],
   },
 
   orderGroupCard: {
