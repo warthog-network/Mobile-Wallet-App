@@ -62,13 +62,51 @@ const DefiOverviewSection: React.FC<Props> = ({
   const [adding, setAdding] = useState(false);
   /** Section open state — closed bar matches Your Assets / wartbunker overview */
   const [showAssets, setShowAssets] = useState(true);
-  const [showOverviewCharts, setShowOverviewCharts] = useState(false);
+  const [openAssetCharts, setOpenAssetCharts] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    void AsyncStorage.getItem('warthogShowOverviewCharts').then((v) => {
-      if (v === '1') setShowOverviewCharts(true);
+    void AsyncStorage.getItem('warthogAssetCharts').then((raw) => {
+      if (!raw) return;
+      try {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) {
+          setOpenAssetCharts(new Set(arr.map((h: unknown) => String(h).toLowerCase())));
+        }
+      } catch {
+        /* ignore */
+      }
     });
   }, []);
+
+  const persistAssetCharts = (next: Set<string>) => {
+    void AsyncStorage.setItem('warthogAssetCharts', JSON.stringify([...next]));
+  };
+  const chartKey = (hash: string) => String(hash || '').replace(/^0x/i, '').toLowerCase();
+  const toggleAssetChart = (hash: string) => {
+    const key = chartKey(hash);
+    if (!key) return;
+    setOpenAssetCharts((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      persistAssetCharts(next);
+      return next;
+    });
+  };
+  const chartOpen = (hash: string) => openAssetCharts.has(chartKey(hash));
+  const anyAssetChartsOpen = orderedAssets.some((a) => chartOpen(a.hash));
+  const toggleAllAssetCharts = () => {
+    const keys = orderedAssets.map((a) => chartKey(a.hash)).filter(Boolean);
+    if (!keys.length) return;
+    setOpenAssetCharts((prev) => {
+      const next = new Set(prev);
+      const anyOpen = keys.some((k) => next.has(k));
+      if (anyOpen) keys.forEach((k) => next.delete(k));
+      else keys.forEach((k) => next.add(k));
+      persistAssetCharts(next);
+      return next;
+    });
+  };
   const [showOrders, setShowOrders] = useState(false);
   const [showLiquidity, setShowLiquidity] = useState(false);
   const [cancelling, setCancelling] = useState<string | null>(null);
@@ -375,6 +413,7 @@ const DefiOverviewSection: React.FC<Props> = ({
       onLayout={ghost ? undefined : () => measureCardLayout(index)}
       style={[
         defiStyles.card,
+        { flexDirection: 'column', alignItems: 'stretch' },
         !ghost && dragAssetIndex === index && defiStyles.cardDragging,
         !ghost && dropAssetIndex === index && dragAssetIndex !== null && defiStyles.cardDropTarget,
         ghost && defiStyles.cardGhost,
@@ -438,6 +477,23 @@ const DefiOverviewSection: React.FC<Props> = ({
           <Text style={defiStyles.compactBtnTextAccent}>Copy Hash</Text>
         </TouchableOpacity>
         <TouchableOpacity
+          style={[
+            defiStyles.compactBtn,
+            chartOpen(asset.hash) && defiStyles.compactBtnActive,
+          ]}
+          onPress={() => toggleAssetChart(asset.hash)}
+          disabled={ghost}
+        >
+          <Text
+            style={[
+              defiStyles.compactBtnText,
+              chartOpen(asset.hash) && defiStyles.compactBtnTextActive,
+            ]}
+          >
+            Chart
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
           style={defiStyles.removeBtn}
           onPress={() => onRemoveAsset(asset.hash)}
           disabled={ghost}
@@ -445,12 +501,14 @@ const DefiOverviewSection: React.FC<Props> = ({
           <Text style={defiStyles.removeBtnText}>×</Text>
         </TouchableOpacity>
       </View>
-      {!ghost && showOverviewCharts ? (
-        <AssetChartPanel
-          nodeUrl={selectedNode}
-          hash={asset.hash}
-          assetName={asset.name}
-        />
+      {!ghost && chartOpen(asset.hash) ? (
+        <View style={{ width: '100%', marginTop: 8 }}>
+          <AssetChartPanel
+            nodeUrl={selectedNode}
+            hash={asset.hash}
+            assetName={asset.name}
+          />
+        </View>
       ) : null}
     </View>
   );
@@ -473,21 +531,15 @@ const DefiOverviewSection: React.FC<Props> = ({
             ) : null}
           </TouchableOpacity>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            {showAssets ? (
+            {showAssets && orderedAssets.length > 0 ? (
               <TouchableOpacity
-                style={[defiStyles.compactBtn, showOverviewCharts && defiStyles.compactBtnActive]}
-                onPress={() => {
-                  setShowOverviewCharts((v) => {
-                    const next = !v;
-                    void AsyncStorage.setItem('warthogShowOverviewCharts', next ? '1' : '0');
-                    return next;
-                  });
-                }}
+                style={[defiStyles.compactBtn, anyAssetChartsOpen && defiStyles.compactBtnActive]}
+                onPress={toggleAllAssetCharts}
               >
                 <Text
                   style={[
                     defiStyles.compactBtnText,
-                    showOverviewCharts && defiStyles.compactBtnTextActive,
+                    anyAssetChartsOpen && defiStyles.compactBtnTextActive,
                   ]}
                 >
                   Charts

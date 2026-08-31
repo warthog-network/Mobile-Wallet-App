@@ -48,6 +48,28 @@ const AssetsModal: React.FC<Props> = ({
   const [searchMeta, setSearchMeta] = useState<{ namePrefix?: string; hashPrefix?: string } | null>(null);
   const [lookupResult, setLookupResult] = useState<AssetInfo | null>(null);
   const [searched, setSearched] = useState(false);
+  const [openAssetCharts, setOpenAssetCharts] = useState<Set<string>>(new Set());
+
+  const chartKey = (hash: string) => String(hash || '').replace(/^0x/i, '').toLowerCase();
+  const toggleAssetChart = (hash: string) => {
+    const key = chartKey(hash);
+    if (!key) return;
+    setOpenAssetCharts((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+  const chartOpen = (hash: string) => openAssetCharts.has(chartKey(hash));
+  const toggleAllSearchCharts = (hashes: string[]) => {
+    const keys = hashes.map(chartKey).filter(Boolean);
+    if (!keys.length) return;
+    setOpenAssetCharts((prev) => {
+      const anyOpen = keys.some((k) => prev.has(k));
+      return anyOpen ? new Set() : new Set(keys);
+    });
+  };
 
   const copyHash = (hash: string, label = 'Asset hash') => {
     if (!hash) return;
@@ -146,7 +168,7 @@ const AssetsModal: React.FC<Props> = ({
     const hash = getAssetHash(asset);
     const assetName = asset.name || 'Asset';
     return (
-      <View key={key} style={defiStyles.card}>
+      <View key={key} style={[defiStyles.card, { flexDirection: 'column', alignItems: 'stretch' }]}>
         <View style={defiStyles.row}>
           {hash ? <AssetMark hash={hash} name={assetName} /> : null}
           <View style={{ flex: 1, marginLeft: hash ? theme.spacing.sm : 0 }}>
@@ -194,15 +216,34 @@ const AssetsModal: React.FC<Props> = ({
               >
                 <Text style={defiStyles.compactBtnTextAccent}>Copy Full Hash</Text>
               </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  defiStyles.compactBtn,
+                  { flex: 1, minWidth: 90 },
+                  chartOpen(hash) && defiStyles.compactBtnActive,
+                ]}
+                onPress={() => toggleAssetChart(hash)}
+              >
+                <Text
+                  style={[
+                    defiStyles.compactBtnText,
+                    chartOpen(hash) && defiStyles.compactBtnTextActive,
+                  ]}
+                >
+                  Chart
+                </Text>
+              </TouchableOpacity>
             </>
           ) : null}
         </View>
-        {hash ? (
-          <AssetChartPanel
-            nodeUrl={selectedNode}
-            hash={hash}
-            assetName={assetName}
-          />
+        {hash && chartOpen(hash) ? (
+          <View style={{ width: '100%', marginTop: 8 }}>
+            <AssetChartPanel
+              nodeUrl={selectedNode}
+              hash={hash}
+              assetName={assetName}
+            />
+          </View>
         ) : null}
       </View>
     );
@@ -222,10 +263,30 @@ const AssetsModal: React.FC<Props> = ({
       : searchMeta?.hashPrefix
         ? ` with hash prefix "${searchMeta.hashPrefix}"`
         : ' (all assets)';
+    const hashes = results.map((a) => getAssetHash(a)).filter(Boolean);
+    const anyOpen = hashes.some((h) => chartOpen(h));
     return (
-      <Text style={{ color: theme.colors.textMuted, fontSize: theme.typography.caption, marginBottom: theme.spacing.sm }}>
-        Found {results.length} match{results.length !== 1 ? 'es' : ''}{label}
-      </Text>
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 8,
+          marginBottom: theme.spacing.sm,
+        }}
+      >
+        <Text style={{ color: theme.colors.textMuted, fontSize: theme.typography.caption, flex: 1 }}>
+          Found {results.length} match{results.length !== 1 ? 'es' : ''}{label}
+        </Text>
+        <TouchableOpacity
+          style={[defiStyles.compactBtn, anyOpen && defiStyles.compactBtnActive]}
+          onPress={() => toggleAllSearchCharts(hashes)}
+        >
+          <Text style={[defiStyles.compactBtnText, anyOpen && defiStyles.compactBtnTextActive]}>
+            Charts
+          </Text>
+        </TouchableOpacity>
+      </View>
     );
   };
 
