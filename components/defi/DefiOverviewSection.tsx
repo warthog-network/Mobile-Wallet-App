@@ -1,4 +1,4 @@
-import React, { useState, useRef, useMemo } from 'react';
+import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, Alert, PanResponder, findNodeHandle } from 'react-native';
 import { toast } from '../../utils/toast';
 import * as Clipboard from 'expo-clipboard';
@@ -11,6 +11,7 @@ import { submitCancelLimitOrder } from '../../utils/defiSubmit';
 import { DEFAULT_FEE } from '../../constants';
 import type { AssetBalance, LiquidityPosition, OpenLimitOrder, OpenOrdersByAsset, WalletData } from '../../types';
 import { theme } from '../../theme';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import AssetMark, { AssetTitle } from './AssetMark';
 import AssetChartPanel from './AssetChartPanel';
 
@@ -61,6 +62,13 @@ const DefiOverviewSection: React.FC<Props> = ({
   const [adding, setAdding] = useState(false);
   /** Section open state — closed bar matches Your Assets / wartbunker overview */
   const [showAssets, setShowAssets] = useState(true);
+  const [showOverviewCharts, setShowOverviewCharts] = useState(false);
+
+  useEffect(() => {
+    void AsyncStorage.getItem('warthogShowOverviewCharts').then((v) => {
+      if (v === '1') setShowOverviewCharts(true);
+    });
+  }, []);
   const [showOrders, setShowOrders] = useState(false);
   const [showLiquidity, setShowLiquidity] = useState(false);
   const [cancelling, setCancelling] = useState<string | null>(null);
@@ -437,7 +445,7 @@ const DefiOverviewSection: React.FC<Props> = ({
           <Text style={defiStyles.removeBtnText}>×</Text>
         </TouchableOpacity>
       </View>
-      {!ghost ? (
+      {!ghost && showOverviewCharts ? (
         <AssetChartPanel
           nodeUrl={selectedNode}
           hash={asset.hash}
@@ -450,24 +458,47 @@ const DefiOverviewSection: React.FC<Props> = ({
   return (
     <View>
       <View style={[defiStyles.section, dragAssetIndex != null && defiStyles.sectionDragging]}>
-        <TouchableOpacity
-          style={defiStyles.sectionHeaderPressable}
-          onPress={() => setShowAssets((v) => !v)}
-          activeOpacity={0.85}
-          accessibilityRole="button"
-          accessibilityState={{ expanded: showAssets }}
-        >
-          <View style={defiStyles.sectionHeaderLeft}>
+        <View style={defiStyles.sectionHeaderPressable}>
+          <TouchableOpacity
+            style={[defiStyles.sectionHeaderLeft, { flex: 1 }]}
+            onPress={() => setShowAssets((v) => !v)}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityState={{ expanded: showAssets }}
+          >
             <Text style={defiStyles.sectionChevron}>{showAssets ? '▼' : '▶'}</Text>
             <Text style={[defiStyles.sectionTitle, defiStyles.sectionTitleAssets]}>Your Assets</Text>
             {orderedAssets.length > 0 ? (
               <Text style={[defiStyles.badge, defiStyles.badgeBlue]}>{orderedAssets.length}</Text>
             ) : null}
+          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            {showAssets ? (
+              <TouchableOpacity
+                style={[defiStyles.compactBtn, showOverviewCharts && defiStyles.compactBtnActive]}
+                onPress={() => {
+                  setShowOverviewCharts((v) => {
+                    const next = !v;
+                    void AsyncStorage.setItem('warthogShowOverviewCharts', next ? '1' : '0');
+                    return next;
+                  });
+                }}
+              >
+                <Text
+                  style={[
+                    defiStyles.compactBtnText,
+                    showOverviewCharts && defiStyles.compactBtnTextActive,
+                  ]}
+                >
+                  Charts
+                </Text>
+              </TouchableOpacity>
+            ) : null}
+            {reorderableAssetCount > 1 && showAssets ? (
+              <Text style={defiStyles.reorderHint}>Hold to reorder</Text>
+            ) : null}
           </View>
-          {reorderableAssetCount > 1 && showAssets ? (
-            <Text style={defiStyles.reorderHint}>Press and hold to reorder</Text>
-          ) : null}
-        </TouchableOpacity>
+        </View>
         {showAssets ? (
         <View style={defiStyles.sectionBody}>
           {loadingAssets && orderedAssets.length === 0 ? (

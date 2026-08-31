@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import { toast } from '../../utils/toast';
+import SpendConfirm from '../SpendConfirm';
 import { defiStyles } from './defiStyles';
 import DefiModalShell from './DefiModalShell';
 import SpendableBalanceDisplay from '../SpendableBalanceDisplay';
@@ -63,6 +64,7 @@ const SendAssetModal: React.FC<Props> = ({
   const [amount, setAmount] = useState('');
   const [fee, setFee] = useState(DEFAULT_FEE);
   const [sending, setSending] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [showQrScanner, setShowQrScanner] = useState(false);
 
   const applyAsset = useCallback((asset: {
@@ -172,7 +174,7 @@ const SendAssetModal: React.FC<Props> = ({
     setAssetHash(hash);
   };
 
-  const handleSend = async () => {
+  const handleSend = async (confirmed = false) => {
     if (!assetHash || !recipient || !amount) {
       toast.error('Missing fields', 'Asset, recipient, and amount are required');
       return;
@@ -186,6 +188,11 @@ const SendAssetModal: React.FC<Props> = ({
       return;
     }
 
+    if (!confirmed) {
+      setConfirmOpen(true);
+      return;
+    }
+    setConfirmOpen(false);
     const amountStr = amount.trim();
     setSending(true);
     try {
@@ -309,10 +316,23 @@ const SendAssetModal: React.FC<Props> = ({
           placeholder={DEFAULT_FEE}
           placeholderTextColor={theme.colors.textMuted}
         />
-        <TouchableOpacity style={defiStyles.btn} onPress={handleSend} disabled={sending}>
+        <TouchableOpacity style={defiStyles.btn} onPress={() => void handleSend(false)} disabled={sending}>
           <Text style={defiStyles.btnText}>{sending ? 'Sending…' : 'Send Asset'}</Text>
         </TouchableOpacity>
       </DefiModalShell>
+      <SpendConfirm
+        open={confirmOpen}
+        title="Confirm send asset"
+        rows={[
+          { label: 'Asset', value: assetName || assetHash || '—' },
+          { label: 'To', value: recipient || '—' },
+          { label: 'Amount', value: amount || '—' },
+          { label: 'Fee', value: `${fee} WART` },
+        ]}
+        busy={sending}
+        onCancel={() => setConfirmOpen(false)}
+        onConfirm={() => void handleSend(true)}
+      />
 
       <QrScannerModal
         visible={showQrScanner}

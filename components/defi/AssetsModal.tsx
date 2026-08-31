@@ -11,6 +11,7 @@ import { DEFAULT_FEE } from '../../constants';
 import type { WalletData } from '../../types';
 import { theme } from '../../theme';
 import AssetMark, { AssetTitle } from './AssetMark';
+import AssetChartPanel from './AssetChartPanel';
 
 interface Props {
   visible: boolean;
@@ -196,6 +197,13 @@ const AssetsModal: React.FC<Props> = ({
             </>
           ) : null}
         </View>
+        {hash ? (
+          <AssetChartPanel
+            nodeUrl={selectedNode}
+            hash={hash}
+            assetName={assetName}
+          />
+        ) : null}
       </View>
     );
   };

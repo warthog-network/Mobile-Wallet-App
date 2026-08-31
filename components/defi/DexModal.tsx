@@ -37,6 +37,7 @@ import {
 import { DEFAULT_FEE } from '../../constants';
 import type { AssetBalance, DexPoolPrefill, WalletData } from '../../types';
 import { theme } from '../../theme';
+import SpendConfirm from '../SpendConfirm';
 import { toast } from '../../utils/toast';
 
 interface Props {
@@ -130,6 +131,7 @@ const DexModal: React.FC<Props> = ({
   const [showTokenPicker, setShowTokenPicker] = useState(false);
   const [manualHashInput, setManualHashInput] = useState('');
   const [assetDecimals, setAssetDecimals] = useState(8);
+  const [swapConfirm, setSwapConfirm] = useState(false);
 
   const [spotPrice, setSpotPrice] = useState<number | null>(null);
   const [marketData, setMarketData] = useState<Record<string, unknown> | null>(null);
@@ -457,7 +459,7 @@ const DexModal: React.FC<Props> = ({
     setShowTokenPicker(false);
   };
 
-  const handleSwap = async () => {
+  const handleSwap = async (confirmed = false) => {
     if (!assetHash || !isValidAssetHash(assetHash)) {
       toast.error('Select token', 'Select a token to swap');
       return;
@@ -467,6 +469,11 @@ const DexModal: React.FC<Props> = ({
       toast.error('Amount', 'Enter an amount');
       return;
     }
+    if (!confirmed) {
+      setSwapConfirm(true);
+      return;
+    }
+    setSwapConfirm(false);
 
     let priceForEncode = effectiveLimitPrice;
     if (orderMode === 'limit') {
@@ -1001,7 +1008,7 @@ const DexModal: React.FC<Props> = ({
 
           <TouchableOpacity
             style={[styles.cta, (loading || ctaBlocked || !assetHash) && styles.ctaDisabled]}
-            onPress={() => void handleSwap()}
+            onPress={() => void handleSwap(false)}
             disabled={loading || ctaBlocked || !assetHash}
           >
             <Text style={styles.ctaText}>{submitLabel}</Text>
@@ -1134,6 +1141,19 @@ const DexModal: React.FC<Props> = ({
           </Pressable>
         </Pressable>
       </Modal>
+      <SpendConfirm
+        open={swapConfirm}
+        title="Confirm DEX submit"
+        rows={[
+          { label: 'Token', value: selectedAsset?.symbol || assetHash || '—' },
+          { label: 'Amount', value: `${payAmount || '—'} ${payingWart ? 'WART' : selectedAsset?.symbol || 'token'}` },
+          { label: 'Fee', value: `${fee} WART` },
+          { label: 'Mode', value: orderMode },
+        ]}
+        busy={loading}
+        onCancel={() => setSwapConfirm(false)}
+        onConfirm={() => void handleSwap(true)}
+      />
     </DefiModalShell>
   );
 };

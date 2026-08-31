@@ -114,21 +114,79 @@ export const importWallet = (privateKey: string): WalletData => {
   return accountToWalletData(account);
 };
 
-// Encrypt wallet data (password ciphertext; may be embedded in multi-auth envelopes)
+export const WALLET_CRYPTO_VERSION = 2;
+const PBKDF2_ITERATIONS = 210_000;
+
+function encryptV2(plaintext: string, password: string): string {
+  const salt = CryptoJS.lib.WordArray.random(16);
+  const iv = CryptoJS.lib.WordArray.random(16);
+  const key = CryptoJS.PBKDF2(String(password), salt, {
+    keySize: 256 / 32,
+    iterations: PBKDF2_ITERATIONS,
+    hasher: CryptoJS.algo.SHA256,
+  });
+  const encrypted = CryptoJS.AES.encrypt(plaintext, key, {
+    iv,
+    mode: CryptoJS.mode.CBC,
+    padding: CryptoJS.pad.Pkcs7,
+  });
+  return JSON.stringify({
+    v: WALLET_CRYPTO_VERSION,
+    kdf: 'pbkdf2-sha256',
+    iter: PBKDF2_ITERATIONS,
+    salt: CryptoJS.enc.Base64.stringify(salt),
+    iv: CryptoJS.enc.Base64.stringify(iv),
+    ct: CryptoJS.enc.Base64.stringify(encrypted.ciphertext),
+  });
+}
+
+function decryptV2(envelope: { iter?: number; salt: string; iv: string; ct: string }, password: string): WalletData {
+  const iterations = Number(envelope.iter) > 0 ? Number(envelope.iter) : PBKDF2_ITERATIONS;
+  const salt = CryptoJS.enc.Base64.parse(envelope.salt);
+  const iv = CryptoJS.enc.Base64.parse(envelope.iv);
+  const ciphertext = CryptoJS.enc.Base64.parse(envelope.ct);
+  const key = CryptoJS.PBKDF2(String(password), salt, {
+    keySize: 256 / 32,
+    iterations,
+    hasher: CryptoJS.algo.SHA256,
+  });
+  const decrypted = CryptoJS.AES.decrypt({ ciphertext } as CryptoJS.lib.CipherParams, key, {
+    iv,
+    mode: CryptoJS.mode.CBC,
+    padding: CryptoJS.pad.Pkcs7,
+  });
+  const decryptedStr = decrypted.toString(CryptoJS.enc.Utf8);
+  if (!decryptedStr) throw new Error('Wrong password or invalid encrypted data');
+  return JSON.parse(decryptedStr);
+}
+
 export const encryptWallet = (walletData: WalletData, password: string): string => {
-  return CryptoJS.AES.encrypt(JSON.stringify(walletData), password).toString();
+  if (!password) throw new Error('Password is required');
+  return encryptV2(JSON.stringify(walletData), password);
 };
 
-// Decrypt wallet data (raw CryptoJS cipher or multi-auth envelope password field)
 export const decryptWallet = (encrypted: string, password: string): WalletData => {
   try {
+    if (!password) throw new Error('Wrong password or invalid encrypted data');
     const cipher = getPasswordCipherFromBlob(encrypted);
     if (!cipher) {
       throw new Error(
         'This wallet has no password unlock — use biometrics, or re-save with a password',
       );
     }
-    const bytes = CryptoJS.AES.decrypt(cipher, password);
+    const inner = String(cipher).trim();
+    if (inner.startsWith('{')) {
+      try {
+        const envelope = JSON.parse(inner);
+        if (envelope && Number(envelope.v) === 2 && envelope.ct && envelope.salt && envelope.iv) {
+          return decryptV2(envelope, password);
+        }
+      } catch (err: any) {
+        if (err?.message && /Wrong password|Invalid password/i.test(err.message)) throw err;
+        if (!(err instanceof SyntaxError)) throw err;
+      }
+    }
+    const bytes = CryptoJS.AES.decrypt(inner, password);
     const decrypted = bytes.toString(CryptoJS.enc.Utf8);
     if (!decrypted) throw new Error('Wrong password or invalid encrypted data');
     return JSON.parse(decrypted);

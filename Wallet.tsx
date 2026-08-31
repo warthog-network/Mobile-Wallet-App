@@ -67,6 +67,7 @@ import {
   insufficientFreeBalanceMessage,
 } from './utils/warthogFormat';
 import SpendableBalanceDisplay from './components/SpendableBalanceDisplay';
+import SpendConfirm from './components/SpendConfirm';
 import { toast } from './utils/toast';
 import { theme } from './theme';
 
@@ -329,6 +330,7 @@ const Wallet: React.FC = () => {
   const [sending, setSending] = useState(false);
 
   const [showSendModal, setShowSendModal] = useState(false);
+  const [sendConfirmOpen, setSendConfirmOpen] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [showContactsModal, setShowContactsModal] = useState(false);
   const [showWalletOptionsModal, setShowWalletOptionsModal] = useState(false);
@@ -1150,11 +1152,16 @@ const Wallet: React.FC = () => {
     }
   };
 
-  const handleSend = async () => {
+  const handleSend = async (confirmed = false) => {
     if (!wallet || !toAddr || !amount) return setError('Fill all fields');
     if (!isValidAddress(toAddr)) {
       return setError('Invalid toAddr: must be exactly 48 hex characters');
     }
+    if (!confirmed) {
+      setSendConfirmOpen(true);
+      return;
+    }
+    setSendConfirmOpen(false);
     setSending(true);
     setError(null);
     try {
@@ -2048,6 +2055,18 @@ const Wallet: React.FC = () => {
         </View>
       </Modal>
 
+      <SpendConfirm
+        open={sendConfirmOpen}
+        title="Confirm send WART"
+        rows={[
+          { label: 'To', value: toAddr || '—' },
+          { label: 'Amount', value: `${amount || '—'} WART` },
+          { label: 'Fee', value: `${fee} WART` },
+        ]}
+        busy={sending}
+        onCancel={() => setSendConfirmOpen(false)}
+        onConfirm={() => void handleSend(true)}
+      />
       <Modal visible={showSendModal} transparent animationType="slide" onRequestClose={() => setShowSendModal(false)}>
         <View style={modalOverlayStyle}>
           <ScrollView style={modalContentStyle} contentContainerStyle={{ paddingBottom: 50 }}>

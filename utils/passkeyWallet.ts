@@ -236,12 +236,6 @@ export async function encryptWithNewBiometrics(
     throw new Error('Invalid wallet data for biometric encryption');
   }
 
-  await assertBiometrics(
-    displayName
-      ? `Enable biometric unlock for “${displayName}”`
-      : 'Enable biometric unlock for this wallet',
-  );
-
   const credentialId = randomHex(16);
   const deviceKey = randomHex(32);
   const payload = walletPayload(walletData);
@@ -250,7 +244,13 @@ export async function encryptWithNewBiometrics(
     deviceKey,
   ).toString();
 
-  await SecureStore.setItemAsync(deviceKeyStoreId(credentialId), deviceKey);
+  await SecureStore.setItemAsync(deviceKeyStoreId(credentialId), deviceKey, {
+    keychainService: 'warthog-wallet',
+    requireAuthentication: true,
+    authenticationPrompt: displayName
+      ? `Confirm biometric unlock for “${displayName}”`
+      : 'Confirm biometric unlock for this wallet',
+  });
 
   return {
     passkey: {
@@ -272,11 +272,33 @@ export async function decryptWithBiometrics(
     throw new Error('This wallet has no biometric unlock');
   }
 
-  await assertBiometrics('Unlock wallet with biometrics');
-
-  const deviceKey = await SecureStore.getItemAsync(
-    deviceKeyStoreId(passkeyBlock.credentialId),
-  );
+  let deviceKey: string | null = null;
+  try {
+    deviceKey = await SecureStore.getItemAsync(
+      deviceKeyStoreId(passkeyBlock.credentialId),
+      {
+        keychainService: 'warthog-wallet',
+        requireAuthentication: true,
+        authenticationPrompt: 'Unlock Warthog wallet',
+      },
+    );
+  } catch {
+    // Legacy keys stored without Keystore user-auth binding.
+    deviceKey = await SecureStore.getItemAsync(
+      deviceKeyStoreId(passkeyBlock.credentialId),
+    );
+    if (deviceKey) {
+      await SecureStore.setItemAsync(
+        deviceKeyStoreId(passkeyBlock.credentialId),
+        deviceKey,
+        {
+          keychainService: 'warthog-wallet',
+          requireAuthentication: true,
+          authenticationPrompt: 'Unlock Warthog wallet',
+        },
+      );
+    }
+  }
   if (!deviceKey) {
     throw new Error(
       'Device key missing (app data cleared or different device). Unlock with password or seed, then re-enable biometrics.',
