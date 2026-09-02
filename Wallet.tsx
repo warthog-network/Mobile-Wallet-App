@@ -319,21 +319,29 @@ const getPasswordCriteria = (password: string): PasswordCriterion[] => [
   { label: 'One special character', met: /[^a-zA-Z\d]/.test(password) },
 ];
 
-const PasswordCriteria: React.FC<{ password: string }> = ({ password }) => (
-  <View style={{ marginTop: 6 }}>
-    {getPasswordCriteria(password).map((c, i) => (
-      <Text
-        key={i}
-        style={{
-          color: c.met ? theme.colors.success : theme.colors.textMuted,
-          fontSize: theme.typography.caption,
-        }}
-      >
-        {c.met ? '✓ ' : '○ '}{c.label}
-      </Text>
-    ))}
-  </View>
-);
+const PasswordCriteria: React.FC<{ password: string; confirmPassword?: string }> = ({ password, confirmPassword }) => {
+  const renderRow = (label: string, met: boolean) => (
+    <Text
+      key={label}
+      style={{
+        color: met ? theme.colors.success : theme.colors.error,
+        fontSize: theme.typography.caption,
+      }}
+    >
+      {met ? '✓ ' : '✗ '}{label}
+    </Text>
+  );
+  const matchMet =
+    confirmPassword !== undefined &&
+    confirmPassword !== '' &&
+    password === confirmPassword;
+  return (
+    <View style={{ marginTop: 6 }}>
+      {getPasswordCriteria(password).map((c) => renderRow(c.label, c.met))}
+      {confirmPassword !== undefined && renderRow('Passwords match', matchMet)}
+    </View>
+  );
+};
 
 /**
  * Explain the wait rather than just spinning through it — the pause during
@@ -2048,18 +2056,20 @@ const Wallet: React.FC = () => {
                       ? 'Password (optional if passkey is on)'
                       : 'Password'}
                 </Text>
-                <StyledTextInput placeholder="Password" secureTextEntry={!showPassword} value={password} onChangeText={setPassword} />
-                <PasswordCriteria password={password} />
-                <Text style={styles.label}>Confirm Password</Text>
-                <StyledTextInput
-                  placeholder="Confirm password"
-                  secureTextEntry={!showConfirmPassword}
-                  value={confirmPassword}
-                  onChangeText={setConfirmPassword}
-                />
-                {confirmPassword.length > 0 && password !== confirmPassword && (
-                  <Text style={styles.error}>Passwords do not match</Text>
-                )}
+                <View style={{ flexDirection: 'row', gap: 12, alignItems: 'flex-start' }}>
+                  <View style={{ flex: 1 }}>
+                    <StyledTextInput placeholder="Password" secureTextEntry={!showPassword} value={password} onChangeText={setPassword} />
+                    <StyledTextInput
+                      placeholder="Confirm password"
+                      secureTextEntry={!showConfirmPassword}
+                      value={confirmPassword}
+                      onChangeText={setConfirmPassword}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <PasswordCriteria password={password} confirmPassword={confirmPassword} />
+                  </View>
+                </View>
                 <TouchableOpacity
                   style={[styles.bigButton, styles.bigButtonPrimary]}
                   onPress={continueToSeedBackup}
@@ -2192,13 +2202,15 @@ const Wallet: React.FC = () => {
             {enableBioOnSave && (
               <Text style={styles.label}>Password optional if biometrics is on (required for 2FA).</Text>
             )}
-            <StyledTextInput placeholder="Password" secureTextEntry value={savePassword} onChangeText={setSavePassword} />
-            <PasswordCriteria password={savePassword} />
-            <Text style={styles.label}>Confirm Password</Text>
-            <StyledTextInput placeholder="Confirm Password" secureTextEntry value={saveConfirmPassword} onChangeText={setSaveConfirmPassword} />
-            {saveConfirmPassword.length > 0 && savePassword !== saveConfirmPassword && (
-              <Text style={styles.error}>Passwords do not match</Text>
-            )}
+            <View style={{ flexDirection: 'row', gap: 12, alignItems: 'flex-start' }}>
+              <View style={{ flex: 1 }}>
+                <StyledTextInput placeholder="Password" secureTextEntry value={savePassword} onChangeText={setSavePassword} />
+                <StyledTextInput placeholder="Confirm Password" secureTextEntry value={saveConfirmPassword} onChangeText={setSaveConfirmPassword} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <PasswordCriteria password={savePassword} confirmPassword={saveConfirmPassword} />
+              </View>
+            </View>
             <TouchableOpacity
               style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 8 }}
               onPress={() => {
@@ -2258,8 +2270,14 @@ const Wallet: React.FC = () => {
           <View style={[modalContentStyle, { paddingBottom: 10 }]}>
             <View style={defiStyles.modalAccent} />
             <Text style={modalTitleStyle}>Download Wallet File</Text>
-            <StyledTextInput placeholder="Password" secureTextEntry value={downloadPassword} onChangeText={setDownloadPassword} />
-            <PasswordCriteria password={downloadPassword} />
+            <View style={{ flexDirection: 'row', gap: 12, alignItems: 'flex-start' }}>
+              <View style={{ flex: 1 }}>
+                <StyledTextInput placeholder="Password" secureTextEntry value={downloadPassword} onChangeText={setDownloadPassword} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <PasswordCriteria password={downloadPassword} />
+              </View>
+            </View>
             <TouchableOpacity style={styles.bigButton} onPress={downloadCurrentWallet}>
               <Text style={styles.bigButtonText}>Download Encrypted File</Text>
             </TouchableOpacity>
