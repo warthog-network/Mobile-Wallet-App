@@ -309,6 +309,32 @@ const getPasswordStrength = (password: string) => {
   return { level: 4, label: 'Strong' };
 };
 
+type PasswordCriterion = { label: string; met: boolean };
+
+const getPasswordCriteria = (password: string): PasswordCriterion[] => [
+  { label: 'At least 8 characters', met: password.length >= 8 },
+  { label: 'One lowercase letter', met: /[a-z]/.test(password) },
+  { label: 'One uppercase letter', met: /[A-Z]/.test(password) },
+  { label: 'One number', met: /\d/.test(password) },
+  { label: 'One special character', met: /[^a-zA-Z\d]/.test(password) },
+];
+
+const PasswordCriteria: React.FC<{ password: string }> = ({ password }) => (
+  <View style={{ marginTop: 6 }}>
+    {getPasswordCriteria(password).map((c, i) => (
+      <Text
+        key={i}
+        style={{
+          color: c.met ? theme.colors.success : theme.colors.textMuted,
+          fontSize: theme.typography.caption,
+        }}
+      >
+        {c.met ? '✓ ' : '○ '}{c.label}
+      </Text>
+    ))}
+  </View>
+);
+
 /**
  * Explain the wait rather than just spinning through it — the pause during
  * 'Encrypting wallet…' is the password KDF doing the work that makes a stolen
@@ -2023,29 +2049,17 @@ const Wallet: React.FC = () => {
                       : 'Password'}
                 </Text>
                 <StyledTextInput placeholder="Password" secureTextEntry={!showPassword} value={password} onChangeText={setPassword} />
-                <Text style={styles.label}>
-                  Strength:{' '}
-                  <Text
-                    style={{
-                      color:
-                        getPasswordStrength(password).level === 1
-                          ? 'red'
-                          : getPasswordStrength(password).level === 2
-                            ? 'orange'
-                            : getPasswordStrength(password).level === 3
-                              ? 'blue'
-                              : 'green',
-                    }}
-                  >
-                    {getPasswordStrength(password).label}
-                  </Text>
-                </Text>
+                <PasswordCriteria password={password} />
+                <Text style={styles.label}>Confirm Password</Text>
                 <StyledTextInput
                   placeholder="Confirm password"
                   secureTextEntry={!showConfirmPassword}
                   value={confirmPassword}
                   onChangeText={setConfirmPassword}
                 />
+                {confirmPassword.length > 0 && password !== confirmPassword && (
+                  <Text style={styles.error}>Passwords do not match</Text>
+                )}
                 <TouchableOpacity
                   style={[styles.bigButton, styles.bigButtonPrimary]}
                   onPress={continueToSeedBackup}
@@ -2175,14 +2189,16 @@ const Wallet: React.FC = () => {
             <Text style={modalTitleStyle}>Save Current Wallet</Text>
             <Text style={styles.label}>Wallet Name</Text>
             <StyledTextInput placeholder="Enter a name for this wallet" value={saveWalletName} onChangeText={setSaveWalletName} />
-            <Text style={styles.label}>
-              {enableBioOnSave
-                ? 'Password optional if biometrics is on (required for 2FA).'
-                : 'Password must be at least 8 characters with uppercase, lowercase, number, and special character.'}
-            </Text>
+            {enableBioOnSave && (
+              <Text style={styles.label}>Password optional if biometrics is on (required for 2FA).</Text>
+            )}
             <StyledTextInput placeholder="Password" secureTextEntry value={savePassword} onChangeText={setSavePassword} />
-            <Text style={styles.label}>Strength: <Text style={{ color: getPasswordStrength(savePassword).level === 1 ? 'red' : getPasswordStrength(savePassword).level === 2 ? 'orange' : getPasswordStrength(savePassword).level === 3 ? 'blue' : 'green' }}>{getPasswordStrength(savePassword).label}</Text></Text>
+            <PasswordCriteria password={savePassword} />
+            <Text style={styles.label}>Confirm Password</Text>
             <StyledTextInput placeholder="Confirm Password" secureTextEntry value={saveConfirmPassword} onChangeText={setSaveConfirmPassword} />
+            {saveConfirmPassword.length > 0 && savePassword !== saveConfirmPassword && (
+              <Text style={styles.error}>Passwords do not match</Text>
+            )}
             <TouchableOpacity
               style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 8 }}
               onPress={() => {
@@ -2242,9 +2258,8 @@ const Wallet: React.FC = () => {
           <View style={[modalContentStyle, { paddingBottom: 10 }]}>
             <View style={defiStyles.modalAccent} />
             <Text style={modalTitleStyle}>Download Wallet File</Text>
-            <Text style={styles.label}>Password must be at least 8 characters with uppercase, lowercase, number, and special character.</Text>
             <StyledTextInput placeholder="Password" secureTextEntry value={downloadPassword} onChangeText={setDownloadPassword} />
-            <Text style={styles.label}>Strength: <Text style={{ color: getPasswordStrength(downloadPassword).level === 1 ? 'red' : getPasswordStrength(downloadPassword).level === 2 ? 'orange' : getPasswordStrength(downloadPassword).level === 3 ? 'blue' : 'green' }}>{getPasswordStrength(downloadPassword).label}</Text></Text>
+            <PasswordCriteria password={downloadPassword} />
             <TouchableOpacity style={styles.bigButton} onPress={downloadCurrentWallet}>
               <Text style={styles.bigButtonText}>Download Encrypted File</Text>
             </TouchableOpacity>
