@@ -1360,6 +1360,16 @@ const Wallet: React.FC = () => {
     }
   };
 
+  const submitUnlockWith2fa = () => {
+    if (!password || passkeyBusy || !selectedWalletToLogin) return;
+    void loadWalletWithBiometrics(selectedWalletToLogin, true);
+  };
+
+  const submitUnlockWithPassword = () => {
+    if (!password || passkeyBusy || !selectedWalletToLogin) return;
+    void loadWallet(selectedWalletToLogin);
+  };
+
   const spendableWart = balanceAvailable || balance;
 
   const handleMaxWart = () => {
@@ -1609,6 +1619,8 @@ const Wallet: React.FC = () => {
                     secureTextEntry={!showPassword}
                     value={password}
                     onChangeText={setPassword}
+                    onSubmitEditing={loginFromWalletQr}
+                    returnKeyType="go"
                   />
                   <TouchableOpacity style={styles.bigButton} onPress={loginFromWalletQr}>
                     <Text style={styles.bigButtonText}>Decrypt & Import Wallet</Text>
@@ -1667,11 +1679,13 @@ const Wallet: React.FC = () => {
                         secureTextEntry={!showPassword}
                         value={password}
                         onChangeText={setPassword}
+                        onSubmitEditing={submitUnlockWith2fa}
+                        returnKeyType="go"
                       />
                       <TouchableOpacity
                         style={[styles.bigButton, styles.bigButtonPrimary]}
                         disabled={passkeyBusy || !password}
-                        onPress={() => void loadWalletWithBiometrics(selectedWalletToLogin, true)}
+                        onPress={submitUnlockWith2fa}
                       >
                         <Text style={styles.bigButtonPrimaryText}>
                           {passkeyBusy
@@ -1707,11 +1721,13 @@ const Wallet: React.FC = () => {
                             secureTextEntry={!showPassword}
                             value={password}
                             onChangeText={setPassword}
+                            onSubmitEditing={submitUnlockWithPassword}
+                            returnKeyType="go"
                           />
                           <TouchableOpacity
                             style={styles.bigButton}
                             disabled={passkeyBusy || !password}
-                            onPress={() => void loadWallet(selectedWalletToLogin)}
+                            onPress={submitUnlockWithPassword}
                           >
                             <Text style={styles.bigButtonText}>
                               {passkeyBusy ? saveStatus : 'Unlock with password'}
@@ -1747,6 +1763,8 @@ const Wallet: React.FC = () => {
                 placeholder="Wallet name (e.g. main)"
                 value={walletName}
                 onChangeText={setWalletName}
+                onSubmitEditing={() => void handleWalletAction()}
+                returnKeyType="go"
               />
               <Text style={styles.label}>Word count: {wordCount}</Text>
               <View style={styles.buttonRow}>
@@ -1817,6 +1835,8 @@ const Wallet: React.FC = () => {
                 placeholder="Wallet name (optional)"
                 value={walletName}
                 onChangeText={setWalletName}
+                onSubmitEditing={() => void handleWalletAction()}
+                returnKeyType="go"
               />
               <View style={styles.buttonRow}>
                 {(['12', '24'] as const).map((w) => (
@@ -1861,6 +1881,8 @@ const Wallet: React.FC = () => {
                 placeholder="Wallet name (optional)"
                 value={walletName}
                 onChangeText={setWalletName}
+                onSubmitEditing={() => void handleWalletAction()}
+                returnKeyType="go"
               />
               {creatingWallet ? (
                 <ActivityIndicator size="large" color={defiColors.goldHover} />
@@ -1896,6 +1918,8 @@ const Wallet: React.FC = () => {
                     secureTextEntry={!showPassword}
                     value={password}
                     onChangeText={setPassword}
+                    onSubmitEditing={() => void loginFromFile()}
+                    returnKeyType="go"
                   />
                   <TouchableOpacity style={styles.bigButton} onPress={() => void loginFromFile()}>
                     <Text style={styles.bigButtonText}>Open file</Text>
@@ -2064,6 +2088,8 @@ const Wallet: React.FC = () => {
                       secureTextEntry={!showConfirmPassword}
                       value={confirmPassword}
                       onChangeText={setConfirmPassword}
+                      onSubmitEditing={continueToSeedBackup}
+                      returnKeyType="go"
                     />
                   </View>
                   <View style={{ flex: 1 }}>
@@ -2205,7 +2231,14 @@ const Wallet: React.FC = () => {
             <View style={{ flexDirection: 'row', gap: 12, alignItems: 'flex-start' }}>
               <View style={{ flex: 1 }}>
                 <StyledTextInput placeholder="Password" secureTextEntry value={savePassword} onChangeText={setSavePassword} />
-                <StyledTextInput placeholder="Confirm Password" secureTextEntry value={saveConfirmPassword} onChangeText={setSaveConfirmPassword} />
+                <StyledTextInput
+                  placeholder="Confirm Password"
+                  secureTextEntry
+                  value={saveConfirmPassword}
+                  onChangeText={setSaveConfirmPassword}
+                  onSubmitEditing={() => void saveCurrentWallet()}
+                  returnKeyType="go"
+                />
               </View>
               <View style={{ flex: 1 }}>
                 <PasswordCriteria password={savePassword} confirmPassword={saveConfirmPassword} />
@@ -2272,7 +2305,14 @@ const Wallet: React.FC = () => {
             <Text style={modalTitleStyle}>Download Wallet File</Text>
             <View style={{ flexDirection: 'row', gap: 12, alignItems: 'flex-start' }}>
               <View style={{ flex: 1 }}>
-                <StyledTextInput placeholder="Password" secureTextEntry value={downloadPassword} onChangeText={setDownloadPassword} />
+                <StyledTextInput
+                  placeholder="Password"
+                  secureTextEntry
+                  value={downloadPassword}
+                  onChangeText={setDownloadPassword}
+                  onSubmitEditing={downloadCurrentWallet}
+                  returnKeyType="go"
+                />
               </View>
               <View style={{ flex: 1 }}>
                 <PasswordCriteria password={downloadPassword} />
@@ -2366,7 +2406,14 @@ const Wallet: React.FC = () => {
                   </TouchableOpacity>
                 </View>
                 <Text style={styles.label}>Fee (WART)</Text>
-                <StyledTextInput placeholder={DEFAULT_FEE} value={fee} onChangeText={setFee} keyboardType="numeric" />
+                <StyledTextInput
+                  placeholder={DEFAULT_FEE}
+                  value={fee}
+                  onChangeText={setFee}
+                  keyboardType="numeric"
+                  onSubmitEditing={() => void handleSend(false)}
+                  returnKeyType="send"
+                />
                 <TouchableOpacity
                   style={[styles.bigButton, styles.bigButtonPrimary]}
                   onPress={() => void handleSend(false)}
